@@ -1,4 +1,5 @@
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -100,9 +101,9 @@ begin
     raise exception 'already_matched';
   end if;
 
-  invite_code := upper(substr(encode(gen_random_bytes(8), 'hex'), 1, 8));
+  invite_code := upper(substr(encode(extensions.gen_random_bytes(8), 'hex'), 1, 8));
   insert into public.couple_invites (inviter_id, code_hash, expires_at)
-  values (current_user_id, digest(invite_code, 'sha256'), now() + interval '24 hours');
+  values (current_user_id, extensions.digest(invite_code, 'sha256'), now() + interval '24 hours');
   return invite_code;
 end;
 $$;
@@ -134,7 +135,7 @@ begin
 
   select * into invite_row
   from public.couple_invites
-  where code_hash = digest(upper(trim(input_code)), 'sha256')
+  where code_hash = extensions.digest(upper(trim(input_code)), 'sha256')
   for update;
 
   if not found or invite_row.used_at is not null or invite_row.expires_at <= now() then
@@ -330,6 +331,11 @@ using (exists (select 1 from public.couples c where c.id = couple_id and (c.memb
 create policy events_select_members on public.score_events for select to authenticated
 using (exists (select 1 from public.couples c where c.id = couple_id and (c.member_a = auth.uid() or c.member_b = auth.uid())));
 
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.create_invite() from public, anon;
+revoke all on function public.accept_invite(text) from public, anon;
+revoke all on function public.add_score_event(uuid, uuid, integer, text) from public, anon;
+revoke all on function public.update_score_settings(uuid, integer, integer, integer) from public, anon;
 grant execute on function public.create_invite() to authenticated;
 grant execute on function public.accept_invite(text) to authenticated;
 grant execute on function public.add_score_event(uuid, uuid, integer, text) to authenticated;

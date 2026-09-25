@@ -17,12 +17,12 @@ val supabasePublishableKey = localProperties.getProperty("supabase.publishableKe
 
 android {
     namespace = "com.dutu007.favorapp"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.dutu007.favorapp"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
 

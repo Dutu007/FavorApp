@@ -46,5 +46,23 @@ jobs:
         with:
           gradle-version: "9.3.1"
 
+      - name: Configure Supabase client
+        env:
+          SUPABASE_URL: https://lclcldzcndbkluelfphe.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: sb_publishable_EftNsGUlaF6BM-Br-HLP5A_dnL92MlN
+        run: |
+          cat > local.properties <<EOF
+          supabase.url=${SUPABASE_URL}
+          supabase.publishableKey=${SUPABASE_PUBLISHABLE_KEY}
+          EOF
+
       - name: Assemble debug APK
         run: gradle assembleDebug
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FavorApp-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

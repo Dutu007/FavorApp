@@ -1,0 +1,23 @@
+# Android / Gradle
+.gradle/
+build/
+*/build/
+local.properties
+.idea/
+*.iml
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+
+# Supabase local runtime artifacts
+supabase/.branches/
+supabase/.temp/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/

@@ -17,12 +17,12 @@ val supabasePublishableKey = localProperties.getProperty("supabase.publishableKe
 
 android {
     namespace = "com.dutu007.favorapp"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.dutu007.favorapp"
         minSdk = 26
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
 
@@ -46,14 +46,14 @@ android {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    val composeBom = platform("androidx.compose:compose-bom:2025.08.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-    implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
-    implementation("androidx.navigation:navigation-compose:2.9.4")
+    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.2")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
+    implementation("androidx.navigation:navigation-compose:2.9.3")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

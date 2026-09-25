@@ -1,0 +1,4 @@
+# Copy this file to local.properties and fill in the values.
+# sdk.dir=C\\:\\Users\\<your-user>\\AppData\\Local\\Android\\Sdk
+supabase.url=https://lclcldzcndbkluelfphe.supabase.co
+supabase.publishableKey=

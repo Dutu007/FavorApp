@@ -22,8 +22,9 @@ The invitation flow intentionally generates a code and provides a copy action. U
 
 1. Create a Supabase project.
 2. Enable email/password authentication and decide whether email confirmation is required.
-3. Apply the migration in `supabase/migrations/0001_initial.sql`.
-4. Configure the Android app with the Supabase project URL and publishable key through local Gradle properties or a secure build configuration.
+3. Apply the migrations in `supabase/migrations/`.
+4. Copy `local.properties.example` to `local.properties`, then add the Supabase project URL and publishable key.
+5. Open the project in Android Studio and run the `app` configuration.
 
 The Android client must never contain a `service_role` key.
 
@@ -35,3 +36,15 @@ The GitHub Actions workflow applies only pending files under `supabase/migration
 - `SUPABASE_DB_PASSWORD` — the database password for the `FavorApp` project
 
 The workflow targets project ref `lclcldzcndbkluelfphe`.
+
+## Android local setup
+
+Create `local.properties` in the repository root. It is ignored by Git:
+
+```properties
+sdk.dir=C\\:\\Users\\<your-user>\\AppData\\Local\\Android\\Sdk
+supabase.url=https://lclcldzcndbkluelfphe.supabase.co
+supabase.publishableKey=<your-publishable-key>
+```
+
+The app uses only the publishable key. Never put a Supabase `service_role` or secret key in `local.properties` or the APK.

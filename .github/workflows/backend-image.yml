@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "database/**"
       - "docker-compose.yml"
       - ".github/workflows/backend-image.yml"
   pull_request:
     paths:
       - "backend/**"
+      - "database/**"
       - "docker-compose.yml"
       - ".github/workflows/backend-image.yml"
 
@@ -40,6 +42,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build image
         run: docker build -t ghcr.io/dutu007/favorapp-api:${{ github.sha }} backend
+      - name: Build database image
+        run: docker build -t ghcr.io/dutu007/favorapp-postgres:16-alpine database
       - name: Tag latest
         if: github.event_name == 'push'
         run: docker tag ghcr.io/dutu007/favorapp-api:${{ github.sha }} ghcr.io/dutu007/favorapp-api:latest
@@ -48,3 +52,4 @@ jobs:
         run: |
           docker push ghcr.io/dutu007/favorapp-api:${{ github.sha }}
           docker push ghcr.io/dutu007/favorapp-api:latest
+          docker push ghcr.io/dutu007/favorapp-postgres:16-alpine

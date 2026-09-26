@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ghcr.io/dutu007/favorapp-postgres:16-alpine
     mem_limit: 256m
     mem_reservation: 192m
     restart: unless-stopped

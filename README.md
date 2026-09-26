@@ -70,10 +70,12 @@ The existing HTTPS certificate manager should issue the certificate for
 
 ## CI/CD
 
-GitHub Actions builds the Go image and publishes it to:
+GitHub Actions builds the Go image and the PostgreSQL wrapper image. It publishes
+them to:
 
 ```text
 ghcr.io/dutu007/favorapp-api
+ghcr.io/dutu007/favorapp-postgres:16-alpine
 ```
 
 The Android workflow builds an APK configured for the production API and uploads

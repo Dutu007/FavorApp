@@ -3,6 +3,7 @@ package com.dutu007.favorapp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dutu007.favorapp.data.CoupleSnapshot
+import com.dutu007.favorapp.data.ApiException
 import com.dutu007.favorapp.data.FavorRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

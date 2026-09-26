@@ -30,6 +30,9 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 The server keeps ports 80 and 443 for the existing reverse proxy. The API is
 bound to `127.0.0.1:8080`; PostgreSQL is available only inside Docker.
+The Compose limits reserve at most 256 MB for PostgreSQL and 128 MB for the API,
+384 MB total. These limits are suitable for the expected small, low-frequency
+workload and leave memory for the host system and Docker.
 
 Upload `compose.yaml` and create a server `.env` from `.env.example` with a long
 random database password. The backend image is public, so no GHCR login is

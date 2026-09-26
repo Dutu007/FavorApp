@@ -3,6 +3,7 @@
 build/
 */build/
 local.properties
+DEPLOYMENT_LOCAL.md
 .idea/
 *.iml
 
@@ -10,6 +11,7 @@ local.properties
 .env
 .env.*
 !.env.example
+certs/
 *.keystore
 *.jks
 

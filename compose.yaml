@@ -50,9 +50,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks: [favorapp]
+    networks:
+      favorapp:
+      edge:
+        aliases:
+          - favorapp-api
 networks:
   favorapp:
     driver: bridge
+  edge:
+    external: true
+    name: zengdeming-edge
 volumes:
   favorapp-postgres:

@@ -28,7 +28,7 @@ data class AppUiState(
 )
 
 class MainViewModel : ViewModel() {
-    private val repository = FavorRepository()
+    private val repository = FavorRepository(FavorApplication.instance)
     private val _uiState = MutableStateFlow(AppUiState())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
 
@@ -37,7 +37,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun setAuthMode(mode: AuthMode) = _uiState.update { it.copy(authMode = mode, error = null, message = null) }
-    fun setEmail(value: String) = _uiState.update { it.copy(email = value) }
+    fun setEmail(value: String) = _uiState.update { it.copy(email = value.lowercase()) }
     fun setPassword(value: String) = _uiState.update { it.copy(password = value) }
     fun setDisplayName(value: String) = _uiState.update { it.copy(displayName = value) }
     fun setInviteCode(value: String) = _uiState.update { it.copy(inviteCode = value.uppercase()) }
@@ -56,8 +56,12 @@ class MainViewModel : ViewModel() {
 
     fun submitAuth() {
         val state = _uiState.value
-        if (state.email.isBlank() || state.password.length < 6) {
-            _uiState.update { it.copy(error = "请输入邮箱和至少 6 位密码") }
+        if (!state.email.matches(Regex("^[a-z][a-z0-9_]{2,19}$"))) {
+            _uiState.update { it.copy(error = "账号需为 3-20 位字母、数字或下划线，且以字母开头") }
+            return
+        }
+        if (state.password.length !in 8..64 || !state.password.any { it.isUpperCase() } || !state.password.any { it.isLowerCase() } || !state.password.any { it.isDigit() } || state.password.all { it.isLetterOrDigit() }) {
+            _uiState.update { it.copy(error = "密码需为 8-64 位，并包含大写字母、小写字母、数字和特殊字符") }
             return
         }
         if (state.authMode == AuthMode.SIGN_UP && state.displayName.isBlank()) {
@@ -71,13 +75,7 @@ class MainViewModel : ViewModel() {
                 loadSnapshot()
             } else {
                 repository.signUp(state.email, state.password, state.displayName)
-                if (repository.currentUserId() == null) {
-                    _uiState.update {
-                        it.copy(message = "注册成功，请先查收验证邮件，再登录")
-                    }
-                } else {
-                    loadSnapshot()
-                }
+                loadSnapshot()
             }
         }
     }
@@ -117,7 +115,7 @@ class MainViewModel : ViewModel() {
             return
         }
         runBusy {
-            repository.addScore(snapshot.coupleId, partner.userId, delta, note)
+            repository.addScore(delta, note)
             loadSnapshot()
         }
     }
@@ -136,7 +134,7 @@ class MainViewModel : ViewModel() {
             return
         }
         runBusy {
-            repository.updateScoreSettings(snapshot.coupleId, initial, min, max)
+            repository.updateScoreSettings(initial, min, max)
             _uiState.update { it.copy(message = "分数设置已保存") }
             loadSnapshot()
         }
@@ -170,7 +168,9 @@ class MainViewModel : ViewModel() {
             raw.contains("below_minimum", ignoreCase = true) -> "加分后会低于最低分限制"
             raw.contains("above_maximum", ignoreCase = true) -> "加分后会超过最高分限制"
             raw.contains("range_does_not_include_current_score", ignoreCase = true) -> "新的上下限不包含当前分数"
-            raw.contains("Invalid login credentials", ignoreCase = true) -> "邮箱或密码错误"
+            raw.contains("invalid_credentials", ignoreCase = true) -> "账号或密码错误"
+            raw.contains("username_taken", ignoreCase = true) -> "账号已被注册"
+            raw.contains("initial_score_outside_range", ignoreCase = true) -> "初始分数不在上下限范围内"
             raw.isBlank() -> "操作失败，请稍后重试"
             else -> raw.substringBefore(" (Request").take(160)
         }

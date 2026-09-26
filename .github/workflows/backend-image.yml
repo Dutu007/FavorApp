@@ -1,0 +1,48 @@
+name: Build and publish backend image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "docker-compose.yml"
+      - ".github/workflows/backend-image.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "docker-compose.yml"
+      - ".github/workflows/backend-image.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache-dependency-path: backend/go.mod
+      - name: Test backend
+        working-directory: backend
+        run: go test ./...
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build image
+        run: docker build -t ghcr.io/dutu007/favorapp-api:${{ github.sha }} backend
+      - name: Tag latest
+        if: github.event_name == 'push'
+        run: docker tag ghcr.io/dutu007/favorapp-api:${{ github.sha }} ghcr.io/dutu007/favorapp-api:latest
+      - name: Push image
+        if: github.event_name == 'push'
+        run: |
+          docker push ghcr.io/dutu007/favorapp-api:${{ github.sha }}
+          docker push ghcr.io/dutu007/favorapp-api:latest

@@ -13,11 +13,8 @@ local.properties
 *.keystore
 *.jks
 
-# Supabase local runtime artifacts
-supabase/.branches/
-supabase/.temp/
-
 # OS/editor files
+supabase/.temp/
 .DS_Store
 Thumbs.db
 .vscode/

@@ -2,49 +2,70 @@
 
 FavorApp is an Android app for two partners to record mutual favor scores.
 
-## Current scope
+The app uses a self-hosted Go API and PostgreSQL. The production API address is:
 
-- Email registration and login through Supabase Auth
-- One-time invitation code matching
-- Mutual score balances and an append-only change history
-- Optional minimum and maximum score limits
-- Realtime updates for both partners
-
-The invitation flow intentionally generates a code and provides a copy action. Users send the copied code themselves.
-
-## Repository layout
-
-- `docs/architecture.md` — product and technical design
-- `supabase/migrations/20260925130000_initial.sql` — database schema, RLS, and transactional RPCs
-- `.github/workflows/supabase-migrations.yml` — applies pending migrations after changes reach `main`
-
-## Supabase setup
-
-1. Create a Supabase project.
-2. Enable email/password authentication and decide whether email confirmation is required.
-3. Apply the migrations in `supabase/migrations/`.
-4. Copy `local.properties.example` to `local.properties`, then add the Supabase project URL and publishable key.
-5. Open the project in Android Studio and run the `app` configuration.
-
-The Android client must never contain a `service_role` key.
-
-## Automatic migrations
-
-The GitHub Actions workflow applies only pending files under `supabase/migrations/` after a push to `main`. Add these encrypted repository secrets before the first migration deployment:
-
-- `SUPABASE_ACCESS_TOKEN` — a Supabase personal access token
-- `SUPABASE_DB_PASSWORD` — the database password for the `FavorApp` project
-
-The workflow targets project ref `lclcldzcndbkluelfphe`.
-
-## Android local setup
-
-Create `local.properties` in the repository root. It is ignored by Git:
-
-```properties
-sdk.dir=C\\:\\Users\\<your-user>\\AppData\\Local\\Android\\Sdk
-supabase.url=https://lclcldzcndbkluelfphe.supabase.co
-supabase.publishableKey=<your-publishable-key>
+```text
+https://api.zengdeming.cn
 ```
 
-The app uses only the publishable key. Never put a Supabase `service_role` or secret key in `local.properties` or the APK.
+## Features
+
+- Username and password registration and login
+- One-time invitation code matching
+- Mutual score balances and newest-first history
+- Optional minimum and maximum score limits
+- Transactional score updates with retry protection
+
+## Android development
+
+1. Open the repository in Android Studio.
+2. Copy `local.properties.example` to `local.properties`.
+3. Set `sdk.dir` to the local Android SDK path.
+4. Keep `api.baseUrl=https://api.zengdeming.cn` unless using a local API.
+5. Run the `app` configuration or build `assembleDebug`.
+
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Server deployment
+
+The server keeps ports 80 and 443 for the existing reverse proxy. The API is
+bound to `127.0.0.1:8080`; PostgreSQL is available only inside Docker.
+
+Create a server `.env` from `.env.example` with a long random database password,
+then log in to GHCR and run:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The API runs migrations on startup. Configure the existing reverse proxy to
+forward `https://api.zengdeming.cn` to `http://127.0.0.1:8080`.
+
+Example Nginx location:
+
+```nginx
+server {
+    server_name api.zengdeming.cn;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+The existing HTTPS certificate manager should issue the certificate for
+`api.zengdeming.cn`.
+
+## CI/CD
+
+GitHub Actions builds the Go image and publishes it to:
+
+```text
+ghcr.io/dutu007/favorapp-api
+```
+
+The Android workflow builds an APK configured for the production API and uploads
+it as the `FavorApp-debug-apk` artifact.

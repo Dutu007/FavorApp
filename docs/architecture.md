@@ -1,52 +1,49 @@
 # FavorApp architecture
 
-## Product decisions
+## Runtime topology
 
-- A relationship contains exactly two users in the MVP.
-- Each user has an independent score for the other person.
-- A score change is an integer delta and may include an optional note.
-- The home screen combines both users' events and sorts them newest first.
-- An invitation is generated once, copied to the clipboard, and sent by the user manually.
-- Invitation codes expire after 24 hours and can be accepted only once.
-- Empty minimum and maximum values mean that the score is unbounded on that side.
-- The initial value is applied to both balances while the relationship has no score events. After the first event, changing the initial value does not rewrite history or current balances.
+```text
+Android -> HTTPS 443 -> reverse proxy -> Go API :8080 -> PostgreSQL :5432
+```
 
-## Android stack
+The reverse proxy owns public ports 80 and 443. Docker publishes the API only
+on `127.0.0.1:8080`, while PostgreSQL has no host port mapping.
 
-- Kotlin
-- Jetpack Compose and Material 3
+## Android
+
+- Kotlin, Jetpack Compose, Material 3
 - ViewModel plus StateFlow
-- Repository layer around `supabase-kt`
-- Supabase Auth, PostgREST, Realtime, and PostgreSQL RPCs
+- Ktor JSON client
+- Android private preferences for the bearer session token
 
-Suggested package boundaries:
+## Backend
 
-```text
-ui/              Compose screens and reusable components
-feature/auth/    Login, registration, password reset
-feature/pairing/ Invite creation and acceptance
-feature/home/    Score cards and combined event feed
-feature/settings Relationship and profile settings
-data/            Supabase client, DTOs, repositories
-domain/          Models and use cases
-```
+- Go `net/http`
+- `pgx` PostgreSQL driver
+- Argon2id password hashes
+- Random bearer sessions with hashed tokens
+- Server-side authorization for every couple operation
 
-## Navigation states
+## Product behavior
 
-```text
-Signed out -> Auth screens
-Signed in without a couple -> Pairing screen
-Signed in with an active couple -> Home screen
-```
+- A relationship contains exactly two users.
+- An invite is copied and sent manually, expires after 24 hours, and is single-use.
+- Each user has an independent score for the other person.
+- Score changes are integer deltas with optional notes.
+- The combined event feed is newest first.
+- Empty minimum and maximum values mean unbounded on that side.
+- Before the first event, changing the initial score updates both balances.
+- After the first event, range changes cannot exclude an existing balance.
 
-## Score write path
+## Authentication rules
 
-The client calls `add_score_event`. The database function checks membership, locks the target balance, applies the limits, updates the current balance, and inserts the history row in one transaction. The client never calculates or directly writes the authoritative score. Initial value and range changes go through `update_score_settings`; changing the range is rejected when an existing balance would fall outside it.
+- Username: 3-20 characters, starts with a letter, then ASCII letters, digits, or `_`.
+- Password: 8-64 characters with uppercase, lowercase, digit, and special character.
+- Usernames are normalized to lowercase and unique.
 
-## Realtime path
+## Deployment
 
-Subscribe to `couple_scores` and `score_events` for the active couple. A score update refreshes the two score cards and prepends the new event to the combined feed. Reconnect by reloading the active couple and the first page of events.
-
-## Security model
-
-Every public table has RLS enabled. Couple members can read only their own relationship data. Invitation creation, invitation acceptance, and score changes go through security-definer RPCs that validate `auth.uid()` inside PostgreSQL.
+GitHub Actions tests and publishes `ghcr.io/dutu007/favorapp-api`. The server
+uses Docker Compose with a persistent PostgreSQL volume. The API runs embedded
+SQL migrations on startup. Secrets stay in the server `.env` and GitHub secret
+storage.

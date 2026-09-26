@@ -128,7 +128,7 @@ private fun AuthScreen(state: AppUiState, viewModel: MainViewModel) {
         OutlinedTextField(
             value = state.email,
             onValueChange = viewModel::setEmail,
-            label = { Text("邮箱") },
+            label = { Text("账号") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
@@ -152,7 +152,7 @@ private fun AuthScreen(state: AppUiState, viewModel: MainViewModel) {
             else Text(if (state.authMode == AuthMode.SIGN_IN) "登录" else "创建账户")
         }
         Spacer(Modifier.height(12.dp))
-        Text("登录即表示你同意使用 Supabase 进行账户和数据存储", style = MaterialTheme.typography.bodySmall)
+        Text("账号 3-20 位；密码 8-64 位，需包含大小写字母、数字和特殊字符", style = MaterialTheme.typography.bodySmall)
     }
 }
 

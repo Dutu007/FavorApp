@@ -12,8 +12,7 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use(localProperties::load)
 }
 
-val supabaseUrl = localProperties.getProperty("supabase.url", "")
-val supabasePublishableKey = localProperties.getProperty("supabase.publishableKey", "")
+val apiBaseUrl = localProperties.getProperty("api.baseUrl", "https://api.zengdeming.cn")
 
 android {
     namespace = "com.dutu007.favorapp"
@@ -26,8 +25,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabasePublishableKey\"")
+        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
     }
 
     buildFeatures {
@@ -59,10 +57,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    implementation(platform("io.github.jan-tennert.supabase:bom:3.6.0"))
-    implementation("io.github.jan-tennert.supabase:auth-kt")
-    implementation("io.github.jan-tennert.supabase:postgrest-kt")
-    implementation("io.github.jan-tennert.supabase:realtime-kt")
+    implementation("io.ktor:ktor-client-core:3.3.0")
     implementation("io.ktor:ktor-client-android:3.3.0")
+    implementation("io.ktor:ktor-client-content-negotiation:3.3.0")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 }

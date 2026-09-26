@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/android-build.yml"
       - "app/**"
+      - "backend/**"
       - "*.gradle.kts"
       - "gradle.properties"
       - "settings.gradle.kts"
@@ -15,6 +16,7 @@ on:
     paths:
       - ".github/workflows/android-build.yml"
       - "app/**"
+      - "backend/**"
       - "*.gradle.kts"
       - "gradle.properties"
       - "settings.gradle.kts"
@@ -46,14 +48,10 @@ jobs:
         with:
           gradle-version: "9.3.1"
 
-      - name: Configure Supabase client
-        env:
-          SUPABASE_URL: https://lclcldzcndbkluelfphe.supabase.co
-          SUPABASE_PUBLISHABLE_KEY: sb_publishable_EftNsGUlaF6BM-Br-HLP5A_dnL92MlN
+      - name: Configure API client
         run: |
           cat > local.properties <<EOF
-          supabase.url=${SUPABASE_URL}
-          supabase.publishableKey=${SUPABASE_PUBLISHABLE_KEY}
+          api.baseUrl=https://api.zengdeming.cn
           EOF
 
       - name: Assemble debug APK

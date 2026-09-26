@@ -31,16 +31,17 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 The server keeps ports 80 and 443 for the existing reverse proxy. The API is
 bound to `127.0.0.1:8080`; PostgreSQL is available only inside Docker.
 
-Create a server `.env` from `.env.example` with a long random database password,
-then log in to GHCR and run:
+Upload `compose.yaml` and create a server `.env` from `.env.example` with a long
+random database password. The backend image is public, so no GHCR login is
+required. Run:
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose -f compose.yaml pull
+docker compose -f compose.yaml up -d
 ```
 
 To pin a tested image or roll back, set `IMAGE_TAG` in `.env` to a commit SHA
-published by GitHub Actions, then run the same two commands.
+published by GitHub Actions, then run the same two commands with `-f compose.yaml`.
 
 The API runs migrations on startup. Configure the existing reverse proxy to
 forward `https://api.zengdeming.cn` to `http://127.0.0.1:8080`.
@@ -62,8 +63,6 @@ server {
 The existing HTTPS certificate manager should issue the certificate for
 `api.zengdeming.cn`.
 
-The GHCR package may be private by default. On the server, use a GitHub fine
-grained token with package read permission when running `docker login ghcr.io`.
 
 ## CI/CD
 

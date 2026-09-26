@@ -43,7 +43,7 @@ on `127.0.0.1:8080`, while PostgreSQL has no host port mapping.
 
 ## Deployment
 
-GitHub Actions tests and publishes `ghcr.io/dutu007/favorapp-api`. The server
-uses Docker Compose with a persistent PostgreSQL volume. The API runs embedded
-SQL migrations on startup. Secrets stay in the server `.env` and GitHub secret
-storage.
+GitHub Actions tests and publishes the public image
+`ghcr.io/dutu007/favorapp-api`. The server uploads `compose.yaml` and uses Docker
+Compose with a persistent PostgreSQL volume. The API runs embedded SQL
+migrations on startup. Secrets stay in the server `.env`.

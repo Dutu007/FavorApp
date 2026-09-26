@@ -14,7 +14,6 @@ local.properties
 *.jks
 
 # OS/editor files
-supabase/.temp/
 .DS_Store
 Thumbs.db
 .vscode/

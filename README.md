@@ -39,6 +39,9 @@ docker compose pull
 docker compose up -d
 ```
 
+To pin a tested image or roll back, set `IMAGE_TAG` in `.env` to a commit SHA
+published by GitHub Actions, then run the same two commands.
+
 The API runs migrations on startup. Configure the existing reverse proxy to
 forward `https://api.zengdeming.cn` to `http://127.0.0.1:8080`.
 
@@ -58,6 +61,9 @@ server {
 
 The existing HTTPS certificate manager should issue the certificate for
 `api.zengdeming.cn`.
+
+The GHCR package may be private by default. On the server, use a GitHub fine
+grained token with package read permission when running `docker login ghcr.io`.
 
 ## CI/CD
 

@@ -33,7 +33,8 @@ bound to `127.0.0.1:8080`; PostgreSQL is available only inside Docker.
 The Compose limits reserve at most 256 MB for PostgreSQL and 128 MB for the API,
 384 MB total. These limits are suitable for the expected small, low-frequency
 workload and leave memory for the host system and Docker.
-The database service uses the official `postgres:16-alpine` image.
+The database service uses a GHCR image built from the official `postgres:16-alpine`
+image.
 
 Upload `compose.yaml` and create a server `.env` from `.env.example` with a long
 random database password. The backend image is public, so no GHCR login is
@@ -49,6 +50,10 @@ published by GitHub Actions, then run the same two commands with `-f compose.yam
 
 The API runs migrations on startup. Configure the existing reverse proxy to
 forward `https://api.zengdeming.cn` to `http://127.0.0.1:8080`.
+
+Set both GitHub Packages entries, `favorapp-api` and `favorapp-postgres`, to
+**Public** in their package settings. A newly created package may default to
+Private; a private package requires GHCR login on the server.
 
 Example Nginx location:
 

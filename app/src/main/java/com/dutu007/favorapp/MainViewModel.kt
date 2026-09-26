@@ -49,6 +49,7 @@ class MainViewModel : ViewModel() {
             try {
                 loadSnapshot()
             } catch (error: Exception) {
+                if (error is ApiException && error.statusCode == 401) repository.clearSession()
                 _uiState.update { it.copy(loading = false, error = error.userMessage()) }
             }
         }
@@ -146,6 +147,10 @@ class MainViewModel : ViewModel() {
             try {
                 block()
             } catch (error: Exception) {
+                if (error is ApiException && error.statusCode == 401) {
+                    repository.clearSession()
+                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                }
                 _uiState.update { it.copy(error = error.userMessage()) }
             } finally {
                 _uiState.update { it.copy(busy = false) }

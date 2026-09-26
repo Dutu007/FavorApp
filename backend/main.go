@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -20,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"net/url"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -52,7 +54,14 @@ type authResponse struct { Token string `json:"token"`; User userJSON `json:"use
 func main() {
 	ctx := context.Background()
 	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" { log.Fatal("DATABASE_URL is required") }
+	if dsn == "" {
+		if os.Getenv("DATABASE_HOST") == "" || os.Getenv("DATABASE_PORT") == "" || os.Getenv("DATABASE_NAME") == "" || os.Getenv("DATABASE_USER") == "" || os.Getenv("DATABASE_PASSWORD") == "" {
+			log.Fatal("DATABASE_URL or complete DATABASE_* settings are required")
+		}
+		dsn = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		url.QueryEscape(os.Getenv("DATABASE_USER")), url.QueryEscape(os.Getenv("DATABASE_PASSWORD")),
+		os.Getenv("DATABASE_HOST"), os.Getenv("DATABASE_PORT"), os.Getenv("DATABASE_NAME"))
+	}
 	db, err := pgxpool.New(ctx, dsn)
 	if err != nil { log.Fatal(err) }
 	defer db.Close()
@@ -75,7 +84,15 @@ func main() {
 
 	addr := os.Getenv("LISTEN_ADDR"); if addr == "" { addr = ":8080" }
 	log.Printf("FavorApp API listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, logging(mux)))
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           logging(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func migrate(ctx context.Context, db *pgxpool.Pool) error {
@@ -118,5 +135,5 @@ func (s *server) updateSettings(w http.ResponseWriter,r *http.Request){var req s
 func (s *server) displayName(ctx context.Context,id uuid.UUID)string{var name string;if s.db.QueryRow(ctx,`select display_name from app_users where id=$1`,id).Scan(&name)!=nil{return ""};return name};func other(uid,a,b uuid.UUID)uuid.UUID{if uid==a{return b};return a};func optional(v string)*string{v=strings.TrimSpace(v);if v==""{return nil};return &v};func sha256Bytes(v string)[]byte{h:=sha256.Sum256([]byte(v));return h[:]}
 func validPassword(v string)bool{return len([]rune(v))>=8&&len([]rune(v))<=64&&passwordUpper.MatchString(v)&&passwordLower.MatchString(v)&&passwordDigit.MatchString(v)&&passwordSpecial.MatchString(v)}
 func hashPassword(password string)(string,error){salt:=make([]byte,16);if _,err:=rand.Read(salt);err!=nil{return "",err};hash:=argon2.IDKey([]byte(password),salt,3,64*1024,1,32);return fmt.Sprintf("$argon2id$v=19$m=65536,t=3,p=1$%s$%s",base64.RawStdEncoding.EncodeToString(salt),base64.RawStdEncoding.EncodeToString(hash)),nil}
-func verifyPassword(password,encoded string)bool{parts:=strings.Split(encoded,"$");if len(parts)!=6{return false};params:=strings.Split(parts[3],",");var mem uint32;var iter uint32;var parallel uint8;for _,p:=range params{kv:=strings.SplitN(p,"=",2);if len(kv)!=2{continue};switch kv[0]{case "m":v,_:=strconv.ParseUint(kv[1],10,32);mem=uint32(v);case "t":v,_:=strconv.ParseUint(kv[1],10,32);iter=uint32(v);case "p":v,_:=strconv.ParseUint(kv[1],10,8);parallel=uint8(v)}};salt,err:=base64.RawStdEncoding.DecodeString(parts[4]);if err!=nil{return false};expected,err:=base64.RawStdEncoding.DecodeString(parts[5]);if err!=nil{return false};actual:=argon2.IDKey([]byte(password),salt,iter,mem,parallel,uint32(len(expected)));return string(actual)==string(expected)}
-func decodeJSON(w http.ResponseWriter,r *http.Request,v any)bool{defer r.Body.Close();if json.NewDecoder(r.Body).Decode(v)!=nil{errorJSON(w,400,"invalid_json");return false};return true};func writeJSON(w http.ResponseWriter,status int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(status);_=json.NewEncoder(w).Encode(v)};func errorJSON(w http.ResponseWriter,status int,code string){writeJSON(w,status,map[string]string{"error":code})};func logging(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){start:=time.Now();next.ServeHTTP(w,r);log.Printf("%s %s %s",r.Method,r.URL.Path,time.Since(start))})}
+func verifyPassword(password,encoded string)bool{parts:=strings.Split(encoded,"$");if len(parts)!=6{return false};params:=strings.Split(parts[3],",");var mem uint32;var iter uint32;var parallel uint8;for _,p:=range params{kv:=strings.SplitN(p,"=",2);if len(kv)!=2{continue};switch kv[0]{case "m":v,_:=strconv.ParseUint(kv[1],10,32);mem=uint32(v);case "t":v,_:=strconv.ParseUint(kv[1],10,32);iter=uint32(v);case "p":v,_:=strconv.ParseUint(kv[1],10,8);parallel=uint8(v)}};salt,err:=base64.RawStdEncoding.DecodeString(parts[4]);if err!=nil{return false};expected,err:=base64.RawStdEncoding.DecodeString(parts[5]);if err!=nil{return false};actual:=argon2.IDKey([]byte(password),salt,iter,mem,parallel,uint32(len(expected)));return subtle.ConstantTimeCompare(actual,expected)==1}
+func decodeJSON(w http.ResponseWriter,r *http.Request,v any)bool{defer r.Body.Close();r.Body=http.MaxBytesReader(w,r.Body,1<<20);decoder:=json.NewDecoder(r.Body);if decoder.Decode(v)!=nil{errorJSON(w,400,"invalid_json");return false};return true};func writeJSON(w http.ResponseWriter,status int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(status);_=json.NewEncoder(w).Encode(v)};func errorJSON(w http.ResponseWriter,status int,code string){writeJSON(w,status,map[string]string{"error":code})};func logging(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){start:=time.Now();next.ServeHTTP(w,r);log.Printf("%s %s %s",r.Method,r.URL.Path,time.Since(start))})}

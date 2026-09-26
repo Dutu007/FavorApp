@@ -39,6 +39,7 @@ class FavorRepository(context: Context) {
     suspend fun signUp(username: String, password: String, displayName: String) { saveAuth(client.post("$baseUrl/api/v1/auth/register") { json(AuthRequest(username, password, displayName)) }.bodyChecked<AuthResponse>()) }
     suspend fun signOut() { client.post("$baseUrl/api/v1/auth/logout") { auth() }.check(); preferences.edit().clear().apply() }
     fun currentUserId(): String? = preferences.getString("user_id", null)
+    fun clearSession() { preferences.edit().clear().apply() }
     suspend fun createInvite(): String = client.post("$baseUrl/api/v1/invites") { auth() }.bodyChecked<InviteResponse>().code
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
     suspend fun addScore(delta: Int, note: String?) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, UUID.randomUUID().toString())) }.bodyChecked<EventDto>() }

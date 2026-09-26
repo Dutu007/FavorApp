@@ -130,7 +130,7 @@ private fun AuthScreen(state: AppUiState, viewModel: MainViewModel) {
             onValueChange = viewModel::setEmail,
             label = { Text("账号") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))

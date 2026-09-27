@@ -6,11 +6,15 @@ import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ApiException
 import com.dutu007.favorapp.data.FavorRepository
 import com.dutu007.favorapp.data.ScoreRule
+import com.dutu007.favorapp.data.ScorePreset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
 
 enum class AuthMode { SIGN_IN, SIGN_UP }
 
@@ -31,6 +35,10 @@ data class AppUiState(
     val addMax: String = "5",
     val subtractMin: String = "1",
     val subtractMax: String = "5",
+    val manualDelta: String = "",
+    val presetLabel: String = "",
+    val presetDelta: String = "",
+    val scorePresets: List<ScorePreset> = emptyList(),
     val authenticated: Boolean = false,
     val snapshot: CoupleSnapshot? = null,
     val message: String? = null,
@@ -39,10 +47,12 @@ data class AppUiState(
 
 class MainViewModel : ViewModel() {
     private val repository = FavorRepository(FavorApplication.instance)
+    private val preferences = FavorApplication.instance.getSharedPreferences("favorapp_settings", android.content.Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(AppUiState())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
 
     init {
+        loadPresets()
         refreshSession()
     }
 
@@ -59,6 +69,50 @@ class MainViewModel : ViewModel() {
     fun setAddMax(value: String) = _uiState.update { it.copy(addMax = value.filter(Char::isDigit)) }
     fun setSubtractMin(value: String) = _uiState.update { it.copy(subtractMin = value.filter(Char::isDigit)) }
     fun setSubtractMax(value: String) = _uiState.update { it.copy(subtractMax = value.filter(Char::isDigit)) }
+    fun setManualDelta(value: String) = _uiState.update { it.copy(manualDelta = value.filter { c -> c == '-' || c.isDigit() }) }
+    fun setPresetLabel(value: String) = _uiState.update { it.copy(presetLabel = value) }
+    fun setPresetDelta(value: String) = _uiState.update { it.copy(presetDelta = value.filter { c -> c == '-' || c.isDigit() }) }
+    fun addPreset() {
+        val state = _uiState.value
+        val label = state.presetLabel.trim()
+        val delta = state.presetDelta.toIntOrNull()
+        if (label.isBlank() || label.length > 24 || delta == null || delta == 0 || kotlin.math.abs(delta) > 100) {
+            _uiState.update { it.copy(error = "请输入名称，并填写 1 到 100 之间的加分或扣分值") }; return
+        }
+        if (state.scorePresets.size >= 12) { _uiState.update { it.copy(error = "最多保存 12 个预设项") }; return }
+        savePresets(state.scorePresets + ScorePreset(UUID.randomUUID().toString(), label, delta))
+        _uiState.update { it.copy(presetLabel = "", presetDelta = "", message = "预设项已添加", error = null) }
+    }
+    fun removePreset(id: String) {
+        savePresets(_uiState.value.scorePresets.filterNot { it.id == id })
+        _uiState.update { it.copy(message = "预设项已删除", error = null) }
+    }
+    fun validateManualDelta(): Int? {
+        val value = _uiState.value.manualDelta.toIntOrNull()
+        if (value == null || value == 0 || kotlin.math.abs(value) > 100) {
+            _uiState.update { it.copy(error = "请输入 1 到 100 之间的分数，负数表示扣分") }; return null
+        }
+        return value
+    }
+
+    private fun loadPresets() {
+        val saved = preferences.getString("score_presets", null) ?: return
+        val presets = runCatching {
+            val array = JSONArray(saved)
+            (0 until array.length()).map { index ->
+                val item = array.getJSONObject(index)
+                ScorePreset(item.getString("id"), item.getString("label"), item.getInt("delta"))
+            }
+        }.getOrDefault(emptyList())
+        _uiState.update { it.copy(scorePresets = presets) }
+    }
+
+    private fun savePresets(presets: List<ScorePreset>) {
+        val array = JSONArray()
+        presets.forEach { preset -> array.put(JSONObject().put("id", preset.id).put("label", preset.label).put("delta", preset.delta)) }
+        preferences.edit().putString("score_presets", array.toString()).apply()
+        _uiState.update { it.copy(scorePresets = presets) }
+    }
     fun clearNotice() = _uiState.update { it.copy(message = null, error = null) }
 
     fun refreshSession() {

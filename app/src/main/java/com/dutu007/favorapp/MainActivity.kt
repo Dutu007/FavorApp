@@ -15,6 +15,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -73,6 +74,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ScoreEventItem
+import com.dutu007.favorapp.data.ScorePreset
 import com.dutu007.favorapp.ui.theme.FavorTheme
 
 private val PinkGradient = Brush.verticalGradient(
@@ -309,7 +311,7 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
                 }
                 Spacer(Modifier.height(16.dp))
                 if (!receiveInvite) {
-                    PairingCard("发出一份专属邀请", "生成邀请码，复制后发送给你的恋人。") {
+                            PairingCard("发出一份专属邀请", "生成邀请码，复制后发送给你的恋人。") {
                         if (state.generatedInvite != null) {
                             Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)) {
                                 Text(state.generatedInvite, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), textAlign = TextAlign.Center, fontSize = 26.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -330,20 +332,6 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
                                 NumberField("总分下限（可选）", state.minScore, viewModel::setMinScore, Modifier.weight(1f))
                                 NumberField("总分上限（可选）", state.maxScore, viewModel::setMaxScore, Modifier.weight(1f))
                             }
-                            Spacer(Modifier.height(14.dp))
-                            Text("单次加分范围", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                                NumberField("最小", state.addMin, viewModel::setAddMin, Modifier.weight(1f))
-                                NumberField("最大", state.addMax, viewModel::setAddMax, Modifier.weight(1f))
-                            }
-                            Spacer(Modifier.height(12.dp))
-                            Text("单次扣分范围", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                                NumberField("最小", state.subtractMin, viewModel::setSubtractMin, Modifier.weight(1f))
-                                NumberField("最大", state.subtractMax, viewModel::setSubtractMax, Modifier.weight(1f))
-                            }
                             Spacer(Modifier.height(20.dp))
                             PrimaryAction("生成专属邀请码", state.busy, viewModel::createInvite)
                         }
@@ -361,7 +349,7 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
             }
         }
     }
-    if (showAccount) AccountDialog(state.busy, viewModel) { showAccount = false }
+    if (showAccount) SettingsScreen(state, viewModel) { showAccount = false }
 }
 
 @Composable
@@ -431,25 +419,22 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                         item { CoupleHeroCard(snapshot) }
                         item {
                             PairingCard("记录一次", null) {
-                                AppTextField(note, { note = it }, "今天发生了什么？（可选）", "✎")
-                                Spacer(Modifier.height(20.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    deltas.forEach { delta ->
-                                        Button(
-                                            onClick = { pendingDelta = delta },
-                                            enabled = !state.busy,
-                                            modifier = Modifier.weight(1f).height(52.dp),
-                                            contentPadding = PaddingValues(0.dp),
-                                            shape = RoundedCornerShape(14.dp),
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = if (delta > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                                contentColor = if (delta > 0) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            ),
-                                        ) { Text(if (delta > 0) "+$delta" else "$delta", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+                                AppTextField(note, { note = it }, "备注（可选）", "✎")
+                                Spacer(Modifier.height(16.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    NumberField("加分 / 扣分值", state.manualDelta, viewModel::setManualDelta, Modifier.weight(1f))
+                                    Button(onClick = { pendingDelta = viewModel.validateManualDelta() }, enabled = !state.busy, modifier = Modifier.height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("记录") }
+                                }
+                                if (state.scorePresets.isNotEmpty()) {
+                                    Spacer(Modifier.height(18.dp))
+                                    Text("常用记录", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                                    Spacer(Modifier.height(8.dp))
+                                    state.scorePresets.forEach { preset ->
+                                        PresetRow(preset) { pendingDelta = preset.delta }
                                     }
                                 }
-                                Spacer(Modifier.height(12.dp))
-                                Text("确认后才会保存这次记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                                Spacer(Modifier.height(10.dp))
+                                Text("正数为加分，负数为扣分；确认后才会保存", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                             }
                         }
                         item {
@@ -483,7 +468,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             }
         }
     }
-    if (showSettings) AccountDialog(state.busy, viewModel) { showSettings = false }
+    if (showSettings) SettingsScreen(state, viewModel) { showSettings = false }
     pendingDelta?.let { delta ->
         ScoreConfirmDialog(snapshot.partnerName, delta, note, state.busy, onDismiss = { pendingDelta = null }) {
             pendingDelta = null
@@ -569,6 +554,76 @@ private fun EventCard(event: ScoreEventItem) {
             }
             Text("分数变为 ${event.scoreAfter} · ${formatTime(event.createdAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 7.dp))
             if (!event.note.isNullOrBlank()) Text(event.note, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+        }
+    }
+}
+
+@Composable
+private fun PresetRow(preset: ScorePreset, onClick: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = if (preset.delta > 0) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant) {
+        Row(modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(preset.label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), color = if (preset.delta > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismiss: () -> Unit) {
+    BackHandler { onDismiss() }
+    AppBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = { Text("设置", fontWeight = FontWeight.Bold) },
+                    navigationIcon = { TextButton(onClick = onDismiss) { Text("‹", fontSize = 30.sp) } },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                )
+            },
+        ) { padding ->
+            LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                item { Text("记录预设", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                item { Text("把常用的加分和扣分整理成快捷项，主界面点击后确认即可记录。", color = MaterialTheme.colorScheme.secondary) }
+                item {
+                    PairingCard("添加预设项", null) {
+                        AppTextField(state.presetLabel, viewModel::setPresetLabel, "名称，例如：主动报备", "♡")
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f))
+                            Button(onClick = viewModel::addPreset, enabled = !state.busy, modifier = Modifier.height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("添加") }
+                        }
+                    }
+                }
+                item { Notice(state, viewModel::clearNotice) }
+                if (state.scorePresets.isEmpty()) item { EmptyPresetCard() }
+                else items(state.scorePresets, key = { it.id }) { preset ->
+                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) {
+                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(preset.label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                            Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), color = if (preset.delta > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                            TextButton(onClick = { viewModel.removePreset(preset.id) }) { Text("删除") }
+                        }
+                    }
+                }
+                item {
+                    Spacer(Modifier.height(10.dp))
+                    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) {
+                        TextButton(onClick = { viewModel.signOut(); onDismiss() }, modifier = Modifier.fillMaxWidth(), enabled = !state.busy) { Text("退出登录", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyPresetCard() {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.72f)) {
+        Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("还没有预设项", fontWeight = FontWeight.SemiBold)
+            Text("添加后会显示在首页的“常用记录”中", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

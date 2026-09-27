@@ -5,3 +5,4 @@ data class ScoreEventItem(val id: String, val actorName: String, val targetName:
 data class ScoreRule(val initialScore: Int = 0, val minScore: Int? = null, val maxScore: Int? = null, val addMin: Int = 1, val addMax: Int = 5, val subtractMin: Int = 1, val subtractMax: Int = 5)
 data class ScoreSettingRow(val coupleId: String, val initialScore: Int, val minScore: Int? = null, val maxScore: Int? = null, val addMin: Int = 1, val addMax: Int = 5, val subtractMin: Int = 1, val subtractMax: Int = 5)
 data class CoupleSnapshot(val coupleId: String, val currentUserId: String, val currentUserName: String, val partnerName: String, val cards: List<ScoreCard>, val events: List<ScoreEventItem>, val settings: ScoreSettingRow)
+data class ScorePreset(val id: String, val label: String, val delta: Int)

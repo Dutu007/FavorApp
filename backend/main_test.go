@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"testing"
+)
 
 func TestPasswordRules(t *testing.T) {
 	valid := "StrongPass1!"
@@ -15,4 +20,22 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if !verifyPassword("StrongPass1!", hash) { t.Fatal("expected password to verify") }
 	if verifyPassword("WrongPass1!", hash) { t.Fatal("wrong password verified") }
+}
+
+func TestSessionTokenHashUsesReturnedToken(t *testing.T) {
+	token, stored, err := newSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored, tokenHash(token)) {
+		t.Fatal("session hash does not match the returned token")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyHash := sha256.Sum256(raw)
+	if bytes.Equal(stored, legacyHash[:]) {
+		t.Fatal("session hash uses decoded token bytes instead of the returned token")
+	}
 }

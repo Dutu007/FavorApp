@@ -19,6 +19,7 @@ import java.util.UUID
 
 @Serializable private data class AuthRequest(val username: String, val password: String, @SerialName("display_name") val displayName: String? = null)
 @Serializable private data class InviteRequest(val code: String)
+@Serializable private data class NicknameRequest(val nickname: String)
 @Serializable private data class InviteCreateRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int?, @SerialName("max_score") val max: Int?, @SerialName("add_min") val addMin: Int, @SerialName("add_max") val addMax: Int, @SerialName("subtract_min") val subtractMin: Int, @SerialName("subtract_max") val subtractMax: Int)
 @Serializable private data class ScoreRequest(val delta: Int, val note: String? = null, @SerialName("idempotency_key") val idempotencyKey: String)
 @Serializable private data class SettingsRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
@@ -28,7 +29,7 @@ import java.util.UUID
 @Serializable private data class ScoreCardDto(@SerialName("user_id") val userId: String, val name: String, val score: Int)
 @Serializable private data class EventDto(val id: String, @SerialName("actor_name") val actorName: String, @SerialName("target_name") val targetName: String, val delta: Int, @SerialName("score_after") val scoreAfter: Int, val note: String? = null, @SerialName("created_at") val createdAt: String)
 @Serializable private data class SettingsDto(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
-@Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto)
+@Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, @SerialName("partner_nickname") val partnerNickname: String = "", val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto)
 @Serializable private data class ErrorDto(val error: String)
 
 class FavorRepository(context: Context) {
@@ -45,14 +46,15 @@ class FavorRepository(context: Context) {
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
     suspend fun addScore(delta: Int, note: String?) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, UUID.randomUUID().toString())) }.bodyChecked<EventDto>() }
     suspend fun updateScoreSettings(initial: Int, min: Int?, max: Int?) { client.put("$baseUrl/api/v1/score-settings") { auth(); json(SettingsRequest(initial, min, max)) }.check() }
-    suspend fun loadSnapshot(): CoupleSnapshot? { val response = client.get("$baseUrl/api/v1/couple") { auth() }; response.check(); val raw = response.bodyAsText().trim(); if (raw == "null") return null; return Json.decodeFromString<CoupleDto>(raw).toSnapshot() }
+    suspend fun updateNickname(nickname: String) { client.put("$baseUrl/api/v1/couple/nickname") { auth(); json(NicknameRequest(nickname)) }.check() }
+    suspend fun loadSnapshot(from: String? = null, to: String? = null, keyword: String? = null): CoupleSnapshot? { val response = client.get("$baseUrl/api/v1/couple") { auth(); url { from?.takeIf { it.isNotBlank() }?.let { parameters.append("from", it) }; to?.takeIf { it.isNotBlank() }?.let { parameters.append("to", it) }; keyword?.takeIf { it.isNotBlank() }?.let { parameters.append("keyword", it) } } }; response.check(); val raw = response.bodyAsText().trim(); if (raw == "null") return null; return Json.decodeFromString<CoupleDto>(raw).toSnapshot() }
 
     private fun saveAuth(auth: AuthResponse) { preferences.edit().putString("token", auth.token).putString("user_id", auth.user.id).apply() }
     private fun HttpRequestBuilder.auth() { header("Authorization", "Bearer ${preferences.getString("token", "")}") }
     private fun HttpRequestBuilder.json(value: Any) { contentType(ContentType.Application.Json); setBody(value) }
     private suspend inline fun <reified T> HttpResponse.bodyChecked(): T { check(); return body() }
     private suspend fun HttpResponse.check() { if (status.value !in 200..299) { val error = runCatching { body<ErrorDto>() }.getOrNull()?.error; throw ApiException(status.value, error ?: "request_failed") } }
-    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, cards.map { ScoreCard(it.userId, it.name, it.score) }, events.map { ScoreEventItem(it.id, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax))
+    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, partnerNickname, cards.map { ScoreCard(it.userId, it.name, it.score) }, events.map { ScoreEventItem(it.id, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax))
 }
 
 class ApiException(val statusCode: Int, val code: String) : Exception(code)

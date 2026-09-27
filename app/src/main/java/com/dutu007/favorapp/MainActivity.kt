@@ -58,6 +58,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -390,11 +391,19 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     var note by rememberSaveable { mutableStateOf("") }
     var records by rememberSaveable { mutableStateOf(false) }
     var filter by rememberSaveable { mutableStateOf(0) }
+    var keyword by rememberSaveable { mutableStateOf("") }
+    var date by rememberSaveable { mutableStateOf("") }
     var pendingDelta by rememberSaveable { mutableStateOf<Int?>(null) }
     BackHandler(enabled = records) { records = false }
     val deltas = listOf(-snapshot.settings.subtractMax, -snapshot.settings.subtractMin, snapshot.settings.addMin, snapshot.settings.addMax).distinct()
     val visibleEvents = snapshot.events.filter {
         when (filter) { 1 -> it.delta > 0; 2 -> it.delta < 0; else -> true }
+    }
+    LaunchedEffect(records, keyword, date, filter) {
+        if (records) {
+            kotlinx.coroutines.delay(300)
+            viewModel.refreshSnapshot(keyword = keyword, date = date)
+        }
     }
     AppBackground {
         Scaffold(
@@ -407,7 +416,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             },
             topBar = {
                 TopAppBar(
-                    title = { Text(if (records) "心动记录" else "我们的空间", fontWeight = FontWeight.Bold) },
+                    title = { Text(if (records) "好感度记录" else "我们的空间", fontWeight = FontWeight.Bold) },
                     actions = {
                         TextButton(onClick = viewModel::refreshSnapshot, enabled = !state.busy) { Text("刷新") }
                         TextButton(onClick = { showSettings = true }, enabled = !state.busy) { Text("设置") }
@@ -448,7 +457,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                         }
                         item {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("最近的心动", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("最近的好感度记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 TextButton(onClick = { records = true }) { Text("查看记录  ›") }
                             }
                         }
@@ -456,10 +465,14 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                         else items(snapshot.events.take(3), key = { it.id }) { EventCard(it) }
                     } else {
                         item {
-                            Text("把日常，写成我们的故事", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Text("好感度记录", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            Text("最近 " + snapshot.events.size + " 条记录 · 新的心动排在前面", color = MaterialTheme.colorScheme.secondary)
+                            Text("按日期和关键词查找你们的记录", color = MaterialTheme.colorScheme.secondary)
                             Spacer(Modifier.height(16.dp))
+                            AppTextField(keyword, { keyword = it }, "搜索备注或姓名", "⌕")
+                            Spacer(Modifier.height(10.dp))
+                            AppTextField(date, { date = it.take(10) }, "日期（YYYY-MM-DD）", "日", KeyboardType.Ascii)
+                            Spacer(Modifier.height(10.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 listOf("全部", "加分", "减分").forEachIndexed { index, label ->
                                     FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) })
@@ -509,7 +522,7 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot) {
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     AvatarBubble(snapshot.partnerName)
                     Spacer(Modifier.height(8.dp))
-                    Text(snapshot.partnerName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    Text(snapshot.partnerNickname.ifBlank { snapshot.partnerName }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                     Text("恋人", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                 }
             }
@@ -581,7 +594,10 @@ private fun PresetRow(preset: ScorePreset, onClick: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismiss: () -> Unit) {
+    var page by rememberSaveable { mutableStateOf("list") }
     BackHandler { onDismiss() }
+    if (page == "nickname") { NicknameSettings(state, viewModel) { page = "list" }; return }
+    if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
     AppBackground {
         Scaffold(
             containerColor = Color.Transparent,
@@ -594,29 +610,10 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
             },
         ) { padding ->
             LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                item { Text("记录预设", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-                item { Text("把常用的加分和扣分整理成快捷项，主界面点击后确认即可记录。", color = MaterialTheme.colorScheme.secondary) }
                 item {
-                    PairingCard("添加预设项", null) {
-                        AppTextField(state.presetLabel, viewModel::setPresetLabel, "名称，例如：主动报备", "♡")
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f))
-                            Button(onClick = viewModel::addPreset, enabled = !state.busy, modifier = Modifier.height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("添加") }
-                        }
-                    }
+                    SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
                 }
-                item { Notice(state, viewModel::clearNotice) }
-                if (state.scorePresets.isEmpty()) item { EmptyPresetCard() }
-                else items(state.scorePresets, key = { it.id }) { preset ->
-                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) {
-                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(preset.label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                            Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), color = if (preset.delta > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                            TextButton(onClick = { viewModel.removePreset(preset.id) }) { Text("删除") }
-                        }
-                    }
-                }
+                item { SettingsRow("添加记录预设", "${state.scorePresets.size} 项") { page = "presets" } }
                 item {
                     Spacer(Modifier.height(10.dp))
                     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) {
@@ -624,6 +621,35 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable private fun SettingsRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = 0.92f)) {
+        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) { Text(title, fontWeight = FontWeight.SemiBold); Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary) }
+            Text("›", fontSize = 28.sp, color = MaterialTheme.colorScheme.secondary)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun NicknameSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+    var nickname by rememberSaveable { mutableStateOf(state.snapshot?.partnerNickname.orEmpty()) }
+    Scaffold(containerColor = Color.Transparent, topBar = { TopAppBar(title = { Text("恋人昵称") }, navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } }) }) { padding ->
+        Column(Modifier.padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡"); Button(onClick = { viewModel.savePartnerNickname(nickname); onBack() }, modifier = Modifier.fillMaxWidth()) { Text("保存") } }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun PresetSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+    Scaffold(containerColor = Color.Transparent, topBar = { TopAppBar(title = { Text("添加记录预设") }, navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } }) }) { padding ->
+        LazyColumn(Modifier.padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
+            item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "名称，例如：主动报备", "♡") }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset) { Text("添加") } } }
+            item { Notice(state, viewModel::clearNotice) }
+            items(state.scorePresets, key = { it.id }) { preset -> Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Text(preset.label, Modifier.weight(1f)); Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), fontWeight = FontWeight.Bold); TextButton(onClick = { viewModel.removePreset(preset.id) }) { Text("删除") } } } }
         }
     }
 }

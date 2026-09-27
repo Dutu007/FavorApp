@@ -26,6 +26,7 @@ data class AppUiState(
     val password: String = "",
     val confirmPassword: String = "",
     val displayName: String = "",
+    val partnerNickname: String = "",
     val inviteCode: String = "",
     val generatedInvite: String? = null,
     val initialScore: String = "0",
@@ -61,6 +62,7 @@ class MainViewModel : ViewModel() {
     fun setPassword(value: String) = _uiState.update { it.copy(password = value) }
     fun setConfirmPassword(value: String) = _uiState.update { it.copy(confirmPassword = value) }
     fun setDisplayName(value: String) = _uiState.update { it.copy(displayName = value) }
+    fun setPartnerNickname(value: String) = _uiState.update { it.copy(partnerNickname = value.take(8)) }
     fun setInviteCode(value: String) = _uiState.update { it.copy(inviteCode = value.uppercase()) }
     fun setInitialScore(value: String) = _uiState.update { it.copy(initialScore = value.filter { c -> c == '-' || c.isDigit() }) }
     fun setMinScore(value: String) = _uiState.update { it.copy(minScore = value.filter { c -> c == '-' || c.isDigit() }) }
@@ -115,6 +117,12 @@ class MainViewModel : ViewModel() {
     }
     fun clearNotice() = _uiState.update { it.copy(message = null, error = null) }
 
+    fun savePartnerNickname(nickname: String) {
+        val value = nickname.trim()
+        if (value.length > 8) { _uiState.update { it.copy(error = "昵称最多 8 个字") }; return }
+        runBusy { repository.updateNickname(value); _uiState.update { it.copy(message = "恋人昵称已保存") }; loadSnapshot() }
+    }
+
     fun refreshSession() {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = null) }
@@ -131,12 +139,12 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun refreshSnapshot() {
+    fun refreshSnapshot(keyword: String = "", date: String = "") {
         if (repository.currentUserId() == null) {
             _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
             return
         }
-        runBusy { loadSnapshot() }
+        runBusy { loadSnapshot(keyword, date) }
     }
 
     fun submitAuth() {
@@ -289,9 +297,9 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    private suspend fun loadSnapshot() {
+    private suspend fun loadSnapshot(keyword: String = "", date: String = "") {
         val authenticated = repository.currentUserId() != null
-        val snapshot = repository.loadSnapshot()
+        val snapshot = repository.loadSnapshot(from = date, to = date, keyword = keyword)
         _uiState.update { it.copy(loading = false, authenticated = authenticated, snapshot = snapshot) }
     }
 

@@ -48,6 +48,7 @@ type inviteRequest struct { Code string `json:"code"` }
 type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 type scoreRequest struct { Delta int `json:"delta"`; Note string `json:"note"`; IdempotencyKey string `json:"idempotency_key"` }
 type settingsRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
+type nicknameRequest struct { Nickname string `json:"nickname"` }
 
 type userJSON struct { ID string `json:"id"`; Username string `json:"username"`; DisplayName string `json:"display_name"` }
 type authResponse struct { Token string `json:"token"`; User userJSON `json:"user"` }
@@ -82,6 +83,7 @@ func main() {
 	mux.Handle("POST /api/v1/scores/events", s.auth(http.HandlerFunc(s.addScore)))
 	mux.Handle("PUT /api/v1/score-settings", s.auth(http.HandlerFunc(s.updateSettings)))
 	mux.Handle("GET /api/v1/score-events", s.auth(http.HandlerFunc(s.events)))
+	mux.Handle("PUT /api/v1/couple/nickname", s.auth(http.HandlerFunc(s.updateNickname)))
 
 	addr := os.Getenv("LISTEN_ADDR"); if addr == "" { addr = ":8080" }
 	log.Printf("FavorApp API listening on %s", addr)
@@ -161,12 +163,17 @@ func (s *server) couple(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `select cs.target_user_id,u.username,u.display_name,cs.current_score from couple_scores cs join app_users u on u.id=cs.target_user_id where cs.couple_id=$1`, cid); if err != nil { errorJSON(w, 500, "database_error"); return }; defer rows.Close()
 	type card struct { UserID string `json:"user_id"`; Name string `json:"name"`; Score int `json:"score"` }; cards := []card{}
 	for rows.Next() { var id uuid.UUID; var username, name string; var score int; if err = rows.Scan(&id, &username, &name, &score); err != nil { errorJSON(w, 500, "database_error"); return }; if name == "" { name = username }; cards = append(cards, card{id.String(), name, score}) }
-	events := s.loadEvents(r.Context(), cid)
-	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": s.displayName(r.Context(), uid), "partner_name": s.displayName(r.Context(), other(uid, a, b)), "cards": cards, "events": events, "settings": settings})
+	nickname := ""
+	column := "member_a_nickname"
+	if uid == b { column = "member_b_nickname" }
+	_ = s.db.QueryRow(r.Context(), `select `+column+` from couples where id=$1`, cid).Scan(&nickname)
+	events := s.loadEvents(r.Context(), cid, r.URL.Query().Get("from"), r.URL.Query().Get("to"), r.URL.Query().Get("keyword"))
+	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": s.displayName(r.Context(), uid), "partner_name": s.displayName(r.Context(), other(uid, a, b)), "partner_nickname": nickname, "cards": cards, "events": events, "settings": settings})
 }
 type eventJSON struct{ID string `json:"id"`;ActorName string `json:"actor_name"`;TargetName string `json:"target_name"`;Delta int `json:"delta"`;ScoreAfter int `json:"score_after"`;Note *string `json:"note"`;CreatedAt time.Time `json:"created_at"`}
-func (s *server) loadEvents(ctx context.Context,cid uuid.UUID)[]eventJSON{rows,err:=s.db.Query(ctx,`select e.id,au.display_name,tu.display_name,e.delta,e.score_after,e.note,e.created_at from score_events e join app_users au on au.id=e.actor_id join app_users tu on tu.id=e.target_user_id where e.couple_id=$1 order by e.created_at desc limit 200`,cid);if err!=nil{return []eventJSON{}};defer rows.Close();out:=[]eventJSON{};for rows.Next(){var id uuid.UUID;var a,t string;var d,sa int;var note *string;var at time.Time;if rows.Scan(&id,&a,&t,&d,&sa,&note,&at)==nil{out=append(out,eventJSON{id.String(),a,t,d,sa,note,at})}};return out}
-func (s *server) events(w http.ResponseWriter,r *http.Request){var cid uuid.UUID;err:=s.db.QueryRow(r.Context(),`select id from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid);if err!=nil{writeJSON(w,200,[]eventJSON{});return};writeJSON(w,200,s.loadEvents(r.Context(),cid))}
+func (s *server) loadEvents(ctx context.Context,cid uuid.UUID, from, to, keyword string)[]eventJSON{from = strings.TrimSpace(from); to = strings.TrimSpace(to); keyword = strings.TrimSpace(keyword); if len([]rune(keyword)) > 80 { keyword = string([]rune(keyword)[:80]) }; args := []any{cid}; where := `e.couple_id=$1`; if from != "" { args = append(args, from); where += fmt.Sprintf(" and e.created_at >= $%d::date", len(args)) }; if to != "" { args = append(args, to); where += fmt.Sprintf(" and e.created_at < ($%d::date + interval '1 day')", len(args)) }; if keyword != "" { args = append(args, "%"+keyword+"%"); where += fmt.Sprintf(" and (e.note ilike $%d or au.display_name ilike $%d or tu.display_name ilike $%d)", len(args), len(args), len(args)) }; query := `select e.id,au.display_name,tu.display_name,e.delta,e.score_after,e.note,e.created_at from score_events e join app_users au on au.id=e.actor_id join app_users tu on tu.id=e.target_user_id where `+where+` order by e.created_at desc limit 200`; rows,err:=s.db.Query(ctx,query,args...);if err!=nil{return []eventJSON{}};defer rows.Close();out:=[]eventJSON{};for rows.Next(){var id uuid.UUID;var a,t string;var d,sa int;var note *string;var at time.Time;if rows.Scan(&id,&a,&t,&d,&sa,&note,&at)==nil{out=append(out,eventJSON{id.String(),a,t,d,sa,note,at})}};return out}
+func (s *server) events(w http.ResponseWriter,r *http.Request){var cid uuid.UUID;err:=s.db.QueryRow(r.Context(),`select id from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid);if err!=nil{writeJSON(w,200,[]eventJSON{});return};writeJSON(w,200,s.loadEvents(r.Context(),cid,r.URL.Query().Get("from"),r.URL.Query().Get("to"),r.URL.Query().Get("keyword")))}
+func (s *server) updateNickname(w http.ResponseWriter, r *http.Request) { var req nicknameRequest; if !decodeJSON(w,r,&req) { return }; nickname := strings.TrimSpace(req.Nickname); if len([]rune(nickname)) > 8 { errorJSON(w,400,"nickname_too_long"); return }; var cid,a,b uuid.UUID; if err:=s.db.QueryRow(r.Context(),`select id,member_a,member_b from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid,&a,&b); err!=nil { errorJSON(w,409,"not_matched"); return }; column := "member_a_nickname"; if userID(r)==b { column="member_b_nickname" }; if _,err:=s.db.Exec(r.Context(),`update couples set `+column+`=$1 where id=$2`,nickname,cid);err!=nil{errorJSON(w,500,"database_error");return};writeJSON(w,200,map[string]string{"partner_nickname":nickname}) }
 func (s *server) addScore(w http.ResponseWriter, r *http.Request) {
 	var req scoreRequest; if !decodeJSON(w, r, &req) { return }; if req.Delta == 0 || len(req.IdempotencyKey) < 8 || len(req.IdempotencyKey) > 80 { errorJSON(w, 400, "invalid_score_request"); return }
 	uid := userID(r); var cid, target uuid.UUID; err := s.db.QueryRow(r.Context(), `select id,case when member_a=$1 then member_b else member_a end from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &target); if err != nil { errorJSON(w, 409, "not_matched"); return }

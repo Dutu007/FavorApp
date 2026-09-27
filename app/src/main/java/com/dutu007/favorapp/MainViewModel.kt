@@ -193,22 +193,23 @@ class MainViewModel : ViewModel() {
         val initial = state.initialScore.toIntOrNull()
         val min = state.minScore.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
         val max = state.maxScore.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
-        val addMin = state.addMin.toIntOrNull()
-        val addMax = state.addMax.toIntOrNull()
-        val subtractMin = state.subtractMin.toIntOrNull()
-        val subtractMax = state.subtractMax.toIntOrNull()
-        if (initial == null || (state.minScore.isNotBlank() && min == null) || (state.maxScore.isNotBlank() && max == null) || addMin == null || addMax == null || subtractMin == null || subtractMax == null) {
+        if (initial == null || (state.minScore.isNotBlank() && min == null) || (state.maxScore.isNotBlank() && max == null)) {
             _uiState.update { it.copy(error = "请完整填写分数规则") }; return
         }
         if ((min != null && max != null && min > max) || (min != null && initial < min) || (max != null && initial > max)) {
             _uiState.update { it.copy(error = "初始分数必须在总分上下限内") }; return
         }
-        if (addMin !in 1..100 || addMax !in addMin..100) { _uiState.update { it.copy(error = "单次加分范围需为 1-100，且最小值不能大于最大值") }; return }
-        if (subtractMin !in 1..100 || subtractMax !in subtractMin..100) { _uiState.update { it.copy(error = "单次扣分范围需为 1-100，且最小值不能大于最大值") }; return }
-        val rules = ScoreRule(initial, min, max, addMin, addMax, subtractMin, subtractMax)
+        val rules = ScoreRule(initial, min, max)
         runBusy {
             val code = repository.createInvite(rules)
             _uiState.update { it.copy(generatedInvite = code, message = "邀请码已生成，复制后发送给对方") }
+        }
+    }
+
+    fun enterCouple() {
+        refreshSnapshot()
+        if (_uiState.value.snapshot == null) {
+            _uiState.update { it.copy(message = "还在等待对方输入邀请码，请稍后再试") }
         }
     }
 

@@ -322,6 +322,16 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
                             }
                             Spacer(Modifier.height(12.dp))
                             Text("邀请码有效期为 24 小时，只能使用一次。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                            Spacer(Modifier.height(18.dp))
+                            Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text("已发出邀请", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("对方输入邀请码后，点击下方按钮进入你们的空间。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            PrimaryAction("进入我们的空间", state.busy, viewModel::enterCouple)
                         } else {
                             Text("匹配规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(12.dp))

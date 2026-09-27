@@ -199,7 +199,20 @@ class MainViewModel : ViewModel() {
         if ((min != null && max != null && min > max) || (min != null && initial < min) || (max != null && initial > max)) {
             _uiState.update { it.copy(error = "初始分数必须在总分上下限内") }; return
         }
-        val rules = ScoreRule(initial, min, max)
+        val addMin = state.addMin.toIntOrNull()
+        val addMax = state.addMax.toIntOrNull()
+        val subtractMin = state.subtractMin.toIntOrNull()
+        val subtractMax = state.subtractMax.toIntOrNull()
+        if (addMin == null || addMax == null || subtractMin == null || subtractMax == null) {
+            _uiState.update { it.copy(error = "请填写单次加分和扣分范围") }; return
+        }
+        if (addMin !in 1..100 || addMax !in addMin..100) {
+            _uiState.update { it.copy(error = "单次加分绝对值范围需为 1-100，且最小值不能大于最大值") }; return
+        }
+        if (subtractMin !in 1..100 || subtractMax !in subtractMin..100) {
+            _uiState.update { it.copy(error = "单次扣分绝对值范围需为 1-100，且最小值不能大于最大值") }; return
+        }
+        val rules = ScoreRule(initial, min, max, addMin, addMax, subtractMin, subtractMax)
         runBusy {
             val code = repository.createInvite(rules)
             _uiState.update { it.copy(generatedInvite = code, message = "邀请码已生成，复制后发送给对方") }

@@ -45,7 +45,7 @@ const userKey contextKey = "user-id"
 type registerRequest struct { Username string `json:"username"`; Password string `json:"password"`; DisplayName string `json:"display_name"` }
 type loginRequest struct { Username, Password string }
 type inviteRequest struct { Code string `json:"code"` }
-type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"` }
+type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 type scoreRequest struct { Delta int `json:"delta"`; Note string `json:"note"`; IdempotencyKey string `json:"idempotency_key"` }
 type settingsRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 
@@ -126,7 +126,8 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) { var u userJSON; er
 func (s *server) createInvite(w http.ResponseWriter, r *http.Request) {
 	var req inviteCreateRequest
 	if !decodeJSON(w, r, &req) { return }
-	addMin, addMax, subtractMin, subtractMax := 1, 5, 1, 5
+	addMin, addMax, subtractMin, subtractMax := req.AddMin, req.AddMax, req.SubtractMin, req.SubtractMax
+	if addMin == 0 { addMin = 1 }; if addMax == 0 { addMax = 5 }; if subtractMin == 0 { subtractMin = 1 }; if subtractMax == 0 { subtractMax = 5 }
 	if code := validateScoreRules(req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); code != "" { errorJSON(w, 400, code); return }
 	uid := userID(r); var exists bool
 	_ = s.db.QueryRow(r.Context(), `select exists(select 1 from couples where status='active' and (member_a=$1 or member_b=$1))`, uid).Scan(&exists)

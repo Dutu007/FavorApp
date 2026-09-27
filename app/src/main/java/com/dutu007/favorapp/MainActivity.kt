@@ -482,6 +482,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         ScoreConfirmDialog(snapshot.partnerName, delta, note, state.busy, onDismiss = { pendingDelta = null }) {
             pendingDelta = null
             viewModel.addScore(delta, note)
+            viewModel.setManualDelta("")
             note = ""
         }
     }
@@ -515,7 +516,7 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot) {
             Spacer(Modifier.height(20.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 snapshot.cards.sortedBy { it.userId != snapshot.currentUserId }.forEach {
-                    ScoreCardView(if (it.userId == snapshot.currentUserId) "我收到的好感" else "对方收到的好感", it.score, Modifier.weight(1f))
+                    ScoreCardView(if (it.userId == snapshot.currentUserId) "我的分数" else "恋人的分数", it.score, Modifier.weight(1f))
                 }
             }
         }
@@ -535,7 +536,7 @@ private fun ScoreCardView(name: String, score: Int, modifier: Modifier = Modifie
         Column(Modifier.padding(vertical = 10.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
             Text(score.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Text("收到的好感", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("当前分数", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -695,3 +696,4 @@ private fun NumberField(label: String, value: String, onValueChange: (String) ->
 }
 
 private fun formatTime(value: String): String = value.replace('T', ' ').take(16)
+

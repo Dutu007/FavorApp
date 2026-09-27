@@ -19,7 +19,7 @@ import java.util.UUID
 
 @Serializable private data class AuthRequest(val username: String, val password: String, @SerialName("display_name") val displayName: String? = null)
 @Serializable private data class InviteRequest(val code: String)
-@Serializable private data class InviteCreateRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int?, @SerialName("max_score") val max: Int?, @SerialName("add_min") val addMin: Int, @SerialName("add_max") val addMax: Int, @SerialName("subtract_min") val subtractMin: Int, @SerialName("subtract_max") val subtractMax: Int)
+@Serializable private data class InviteCreateRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int?, @SerialName("max_score") val max: Int?)
 @Serializable private data class ScoreRequest(val delta: Int, val note: String? = null, @SerialName("idempotency_key") val idempotencyKey: String)
 @Serializable private data class SettingsRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class AuthResponse(val token: String, val user: UserDto)
@@ -41,7 +41,7 @@ class FavorRepository(context: Context) {
     suspend fun signOut() { client.post("$baseUrl/api/v1/auth/logout") { auth() }.check(); preferences.edit().clear().apply() }
     fun currentUserId(): String? = preferences.getString("user_id", null)
     fun clearSession() { preferences.edit().clear().apply() }
-    suspend fun createInvite(rules: ScoreRule): String = client.post("$baseUrl/api/v1/invites") { auth(); json(InviteCreateRequest(rules.initialScore, rules.minScore, rules.maxScore, rules.addMin, rules.addMax, rules.subtractMin, rules.subtractMax)) }.bodyChecked<InviteResponse>().code
+    suspend fun createInvite(rules: ScoreRule): String = client.post("$baseUrl/api/v1/invites") { auth(); json(InviteCreateRequest(rules.initialScore, rules.minScore, rules.maxScore)) }.bodyChecked<InviteResponse>().code
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
     suspend fun addScore(delta: Int, note: String?) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, UUID.randomUUID().toString())) }.bodyChecked<EventDto>() }
     suspend fun updateScoreSettings(initial: Int, min: Int?, max: Int?) { client.put("$baseUrl/api/v1/score-settings") { auth(); json(SettingsRequest(initial, min, max)) }.check() }

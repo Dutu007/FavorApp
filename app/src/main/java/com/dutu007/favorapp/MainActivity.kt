@@ -303,7 +303,6 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
                 Spacer(Modifier.height(24.dp))
                 Text("让两颗心，住进同一个空间", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(8.dp))
-                Text("选择一种方式，和恋人一起记录日常的喜欢。", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(28.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     FilterChip(selected = !receiveInvite, onClick = { receiveInvite = false; viewModel.clearNotice() }, label = { Text("邀请对方") }, enabled = !state.busy)

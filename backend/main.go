@@ -45,7 +45,7 @@ const userKey contextKey = "user-id"
 type registerRequest struct { Username string `json:"username"`; Password string `json:"password"`; DisplayName string `json:"display_name"` }
 type loginRequest struct { Username, Password string }
 type inviteRequest struct { Code string `json:"code"` }
-type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
+type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"` }
 type scoreRequest struct { Delta int `json:"delta"`; Note string `json:"note"`; IdempotencyKey string `json:"idempotency_key"` }
 type settingsRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 
@@ -126,14 +126,14 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) { var u userJSON; er
 func (s *server) createInvite(w http.ResponseWriter, r *http.Request) {
 	var req inviteCreateRequest
 	if !decodeJSON(w, r, &req) { return }
-	if req.AddMin == 0 { req.AddMin = 1 }; if req.AddMax == 0 { req.AddMax = 5 }; if req.SubtractMin == 0 { req.SubtractMin = 1 }; if req.SubtractMax == 0 { req.SubtractMax = 5 }
-	if code := validateScoreRules(req.Initial, req.Min, req.Max, req.AddMin, req.AddMax, req.SubtractMin, req.SubtractMax); code != "" { errorJSON(w, 400, code); return }
+	addMin, addMax, subtractMin, subtractMax := 1, 5, 1, 5
+	if code := validateScoreRules(req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); code != "" { errorJSON(w, 400, code); return }
 	uid := userID(r); var exists bool
 	_ = s.db.QueryRow(r.Context(), `select exists(select 1 from couples where status='active' and (member_a=$1 or member_b=$1))`, uid).Scan(&exists)
 	if exists { errorJSON(w, 409, "already_matched"); return }
 	raw := make([]byte, 5); if _, err := rand.Read(raw); err != nil { errorJSON(w, 500, "invite_failed"); return }
 	code := strings.ToUpper(hex.EncodeToString(raw)); h := sha256.Sum256([]byte(code))
-	_, err := s.db.Exec(r.Context(), `insert into invites(id,inviter_id,code_hash,expires_at,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, uuid.New(), uid, h[:], time.Now().Add(24*time.Hour), req.Initial, req.Min, req.Max, req.AddMin, req.AddMax, req.SubtractMin, req.SubtractMax)
+	_, err := s.db.Exec(r.Context(), `insert into invites(id,inviter_id,code_hash,expires_at,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, uuid.New(), uid, h[:], time.Now().Add(24*time.Hour), req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax)
 	if err != nil { errorJSON(w, 500, "invite_failed"); return }; writeJSON(w, 200, map[string]string{"code": code})
 }
 

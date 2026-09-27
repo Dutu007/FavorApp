@@ -6,12 +6,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 private val FavorColors = lightColorScheme(
-    primary = Color(0xFFB33C66),
+    primary = Color(0xFFE45192),
     onPrimary = Color.White,
-    secondary = Color(0xFF7A5262),
-    background = Color(0xFFFFF8F8),
-    surface = Color(0xFFFFF8F8),
-    surfaceVariant = Color(0xFFF7E5EA),
+    primaryContainer = Color(0xFFFFDCEB),
+    onPrimaryContainer = Color(0xFF74183F),
+    secondary = Color(0xFF805A9B),
+    onSecondary = Color.White,
+    background = Color(0xFFFFF8FC),
+    surface = Color(0xFFFFF8FC),
+    surfaceVariant = Color(0xFFF7E8F3),
+    onSurfaceVariant = Color(0xFF6F5A6D),
+    outline = Color(0xFFE5C5D8),
 )
 
 @Composable

@@ -19,14 +19,15 @@ import java.util.UUID
 
 @Serializable private data class AuthRequest(val username: String, val password: String, @SerialName("display_name") val displayName: String? = null)
 @Serializable private data class InviteRequest(val code: String)
+@Serializable private data class InviteCreateRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int?, @SerialName("max_score") val max: Int?, @SerialName("add_min") val addMin: Int, @SerialName("add_max") val addMax: Int, @SerialName("subtract_min") val subtractMin: Int, @SerialName("subtract_max") val subtractMax: Int)
 @Serializable private data class ScoreRequest(val delta: Int, val note: String? = null, @SerialName("idempotency_key") val idempotencyKey: String)
-@Serializable private data class SettingsRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null)
+@Serializable private data class SettingsRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class AuthResponse(val token: String, val user: UserDto)
 @Serializable private data class UserDto(val id: String, val username: String, @SerialName("display_name") val displayName: String)
 @Serializable private data class InviteResponse(val code: String)
 @Serializable private data class ScoreCardDto(@SerialName("user_id") val userId: String, val name: String, val score: Int)
 @Serializable private data class EventDto(val id: String, @SerialName("actor_name") val actorName: String, @SerialName("target_name") val targetName: String, val delta: Int, @SerialName("score_after") val scoreAfter: Int, val note: String? = null, @SerialName("created_at") val createdAt: String)
-@Serializable private data class SettingsDto(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null)
+@Serializable private data class SettingsDto(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto)
 @Serializable private data class ErrorDto(val error: String)
 
@@ -40,7 +41,7 @@ class FavorRepository(context: Context) {
     suspend fun signOut() { client.post("$baseUrl/api/v1/auth/logout") { auth() }.check(); preferences.edit().clear().apply() }
     fun currentUserId(): String? = preferences.getString("user_id", null)
     fun clearSession() { preferences.edit().clear().apply() }
-    suspend fun createInvite(): String = client.post("$baseUrl/api/v1/invites") { auth() }.bodyChecked<InviteResponse>().code
+    suspend fun createInvite(rules: ScoreRule): String = client.post("$baseUrl/api/v1/invites") { auth(); json(InviteCreateRequest(rules.initialScore, rules.minScore, rules.maxScore, rules.addMin, rules.addMax, rules.subtractMin, rules.subtractMax)) }.bodyChecked<InviteResponse>().code
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
     suspend fun addScore(delta: Int, note: String?) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, UUID.randomUUID().toString())) }.bodyChecked<EventDto>() }
     suspend fun updateScoreSettings(initial: Int, min: Int?, max: Int?) { client.put("$baseUrl/api/v1/score-settings") { auth(); json(SettingsRequest(initial, min, max)) }.check() }
@@ -51,7 +52,7 @@ class FavorRepository(context: Context) {
     private fun HttpRequestBuilder.json(value: Any) { contentType(ContentType.Application.Json); setBody(value) }
     private suspend inline fun <reified T> HttpResponse.bodyChecked(): T { check(); return body() }
     private suspend fun HttpResponse.check() { if (status.value !in 200..299) { val error = runCatching { body<ErrorDto>() }.getOrNull()?.error; throw ApiException(status.value, error ?: "request_failed") } }
-    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, cards.map { ScoreCard(it.userId, it.name, it.score) }, events.map { ScoreEventItem(it.id, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max))
+    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, cards.map { ScoreCard(it.userId, it.name, it.score) }, events.map { ScoreEventItem(it.id, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax))
 }
 
 class ApiException(val statusCode: Int, val code: String) : Exception(code)

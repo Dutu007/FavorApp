@@ -39,3 +39,10 @@ func TestSessionTokenHashUsesReturnedToken(t *testing.T) {
 		t.Fatal("session hash uses decoded token bytes instead of the returned token")
 	}
 }
+
+func TestScoreRulesValidation(t *testing.T) {
+	min, max := 0, 100
+	if code := validateScoreRules(10, &min, &max, 1, 5, 1, 5); code != "" { t.Fatalf("valid rules rejected: %s", code) }
+	if code := validateScoreRules(10, &min, &max, 0, 5, 1, 5); code != "invalid_add_range" { t.Fatalf("expected invalid_add_range, got %s", code) }
+	if code := validateScoreRules(10, &min, &max, 1, 5, 6, 5); code != "invalid_subtract_range" { t.Fatalf("expected invalid_subtract_range, got %s", code) }
+}

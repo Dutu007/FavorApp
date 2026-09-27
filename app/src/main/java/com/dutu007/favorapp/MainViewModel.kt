@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ApiException
 import com.dutu007.favorapp.data.FavorRepository
+import com.dutu007.favorapp.data.ScoreRule
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,9 +20,17 @@ data class AppUiState(
     val authMode: AuthMode = AuthMode.SIGN_IN,
     val email: String = "",
     val password: String = "",
+    val confirmPassword: String = "",
     val displayName: String = "",
     val inviteCode: String = "",
     val generatedInvite: String? = null,
+    val initialScore: String = "0",
+    val minScore: String = "",
+    val maxScore: String = "",
+    val addMin: String = "1",
+    val addMax: String = "5",
+    val subtractMin: String = "1",
+    val subtractMax: String = "5",
     val authenticated: Boolean = false,
     val snapshot: CoupleSnapshot? = null,
     val message: String? = null,
@@ -37,16 +46,28 @@ class MainViewModel : ViewModel() {
         refreshSession()
     }
 
-    fun setAuthMode(mode: AuthMode) = _uiState.update { it.copy(authMode = mode, error = null, message = null) }
+    fun setAuthMode(mode: AuthMode) = _uiState.update { it.copy(authMode = mode, confirmPassword = "", error = null, message = null) }
     fun setEmail(value: String) = _uiState.update { it.copy(email = value.lowercase()) }
     fun setPassword(value: String) = _uiState.update { it.copy(password = value) }
+    fun setConfirmPassword(value: String) = _uiState.update { it.copy(confirmPassword = value) }
     fun setDisplayName(value: String) = _uiState.update { it.copy(displayName = value) }
     fun setInviteCode(value: String) = _uiState.update { it.copy(inviteCode = value.uppercase()) }
+    fun setInitialScore(value: String) = _uiState.update { it.copy(initialScore = value.filter { c -> c == '-' || c.isDigit() }) }
+    fun setMinScore(value: String) = _uiState.update { it.copy(minScore = value.filter { c -> c == '-' || c.isDigit() }) }
+    fun setMaxScore(value: String) = _uiState.update { it.copy(maxScore = value.filter { c -> c == '-' || c.isDigit() }) }
+    fun setAddMin(value: String) = _uiState.update { it.copy(addMin = value.filter(Char::isDigit)) }
+    fun setAddMax(value: String) = _uiState.update { it.copy(addMax = value.filter(Char::isDigit)) }
+    fun setSubtractMin(value: String) = _uiState.update { it.copy(subtractMin = value.filter(Char::isDigit)) }
+    fun setSubtractMax(value: String) = _uiState.update { it.copy(subtractMax = value.filter(Char::isDigit)) }
     fun clearNotice() = _uiState.update { it.copy(message = null, error = null) }
 
     fun refreshSession() {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = null) }
+            if (repository.currentUserId() == null) {
+                _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
+                return@launch
+            }
             try {
                 loadSnapshot()
             } catch (error: Exception) {
@@ -54,6 +75,14 @@ class MainViewModel : ViewModel() {
                 _uiState.update { it.copy(loading = false, error = error.userMessage()) }
             }
         }
+    }
+
+    fun refreshSnapshot() {
+        if (repository.currentUserId() == null) {
+            _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
+            return
+        }
+        runBusy { loadSnapshot() }
     }
 
     fun submitAuth() {
@@ -70,6 +99,10 @@ class MainViewModel : ViewModel() {
             _uiState.update { it.copy(error = "注册时请填写昵称") }
             return
         }
+        if (state.authMode == AuthMode.SIGN_UP && state.password != state.confirmPassword) {
+            _uiState.update { it.copy(error = "两次输入的密码不一致") }
+            return
+        }
 
         runBusy {
             if (state.authMode == AuthMode.SIGN_IN) {
@@ -77,7 +110,19 @@ class MainViewModel : ViewModel() {
                 loadSnapshot()
             } else {
                 repository.signUp(state.email, state.password, state.displayName)
-                loadSnapshot()
+                repository.clearSession()
+                _uiState.update {
+                    it.copy(
+                        authMode = AuthMode.SIGN_IN,
+                        password = "",
+                        confirmPassword = "",
+                        displayName = "",
+                        message = "注册成功，请使用新账号登录",
+                        error = null,
+                        authenticated = false,
+                        snapshot = null,
+                    )
+                }
             }
         }
     }
@@ -90,8 +135,25 @@ class MainViewModel : ViewModel() {
     }
 
     fun createInvite() {
+        val state = _uiState.value
+        val initial = state.initialScore.toIntOrNull()
+        val min = state.minScore.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
+        val max = state.maxScore.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
+        val addMin = state.addMin.toIntOrNull()
+        val addMax = state.addMax.toIntOrNull()
+        val subtractMin = state.subtractMin.toIntOrNull()
+        val subtractMax = state.subtractMax.toIntOrNull()
+        if (initial == null || (state.minScore.isNotBlank() && min == null) || (state.maxScore.isNotBlank() && max == null) || addMin == null || addMax == null || subtractMin == null || subtractMax == null) {
+            _uiState.update { it.copy(error = "请完整填写分数规则") }; return
+        }
+        if ((min != null && max != null && min > max) || (min != null && initial < min) || (max != null && initial > max)) {
+            _uiState.update { it.copy(error = "初始分数必须在总分上下限内") }; return
+        }
+        if (addMin !in 1..100 || addMax !in addMin..100) { _uiState.update { it.copy(error = "单次加分范围需为 1-100，且最小值不能大于最大值") }; return }
+        if (subtractMin !in 1..100 || subtractMax !in subtractMin..100) { _uiState.update { it.copy(error = "单次扣分范围需为 1-100，且最小值不能大于最大值") }; return }
+        val rules = ScoreRule(initial, min, max, addMin, addMax, subtractMin, subtractMax)
         runBusy {
-            val code = repository.createInvite()
+            val code = repository.createInvite(rules)
             _uiState.update { it.copy(generatedInvite = code, message = "邀请码已生成，复制后发送给对方") }
         }
     }
@@ -173,6 +235,8 @@ class MainViewModel : ViewModel() {
             raw.contains("cannot_match_self", ignoreCase = true) -> "不能使用自己的邀请码"
             raw.contains("below_minimum", ignoreCase = true) -> "加分后会低于最低分限制"
             raw.contains("above_maximum", ignoreCase = true) -> "加分后会超过最高分限制"
+            raw.contains("add_delta_out_of_range", ignoreCase = true) -> "这次加分不在单次加分范围内"
+            raw.contains("subtract_delta_out_of_range", ignoreCase = true) -> "这次扣分不在单次扣分范围内"
             raw.contains("range_does_not_include_current_score", ignoreCase = true) -> "新的上下限不包含当前分数"
             raw.contains("invalid_credentials", ignoreCase = true) -> "账号或密码错误"
             raw.contains("username_taken", ignoreCase = true) -> "账号已被注册"

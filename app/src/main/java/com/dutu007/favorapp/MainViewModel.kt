@@ -26,7 +26,6 @@ data class AppUiState(
     val password: String = "",
     val confirmPassword: String = "",
     val displayName: String = "",
-    val partnerNickname: String = "",
     val inviteCode: String = "",
     val generatedInvite: String? = null,
     val initialScore: String = "0",
@@ -62,7 +61,6 @@ class MainViewModel : ViewModel() {
     fun setPassword(value: String) = _uiState.update { it.copy(password = value) }
     fun setConfirmPassword(value: String) = _uiState.update { it.copy(confirmPassword = value) }
     fun setDisplayName(value: String) = _uiState.update { it.copy(displayName = value) }
-    fun setPartnerNickname(value: String) = _uiState.update { it.copy(partnerNickname = value.take(8)) }
     fun setInviteCode(value: String) = _uiState.update { it.copy(inviteCode = value.uppercase()) }
     fun setInitialScore(value: String) = _uiState.update { it.copy(initialScore = value.filter { c -> c == '-' || c.isDigit() }) }
     fun setMinScore(value: String) = _uiState.update { it.copy(minScore = value.filter { c -> c == '-' || c.isDigit() }) }
@@ -274,7 +272,8 @@ class MainViewModel : ViewModel() {
             return
         }
         runBusy {
-            repository.updateScoreSettings(initial, min, max)
+            // Keep the per-invite add/subtract ranges; only the score bounds change here.
+            repository.updateScoreSettings(initial, min, max, snapshot.settings.addMin, snapshot.settings.addMax, snapshot.settings.subtractMin, snapshot.settings.subtractMax)
             _uiState.update { it.copy(message = "分数设置已保存") }
             loadSnapshot()
         }

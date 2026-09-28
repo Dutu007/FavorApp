@@ -121,7 +121,11 @@ func (s *server) register(w http.ResponseWriter, r *http.Request) {
 	hash, err := hashPassword(req.Password); if err != nil { errorJSON(w, 500, "password_hash_failed"); return }; id := uuid.New(); _, err = s.db.Exec(r.Context(), `insert into app_users(id,username,display_name,password_hash) values($1,$2,$3,$4)`, id, username, display, hash); if err != nil { if strings.Contains(err.Error(), "duplicate") { errorJSON(w, 409, "username_taken") } else { errorJSON(w, 500, "database_error") }; return }; s.issueSession(w, r, id, userJSON{ID:id.String(),Username:username,DisplayName:display})
 }
 func (s *server) login(w http.ResponseWriter, r *http.Request) { var req loginRequest; if !decodeJSON(w,r,&req) { return }; var id uuid.UUID; var display, stored string; err := s.db.QueryRow(r.Context(), `select id,display_name,password_hash from app_users where username=$1`, strings.ToLower(strings.TrimSpace(req.Username))).Scan(&id,&display,&stored); if err != nil || !verifyPassword(req.Password,stored) { errorJSON(w,401,"invalid_credentials"); return }; s.issueSession(w,r,id,userJSON{ID:id.String(),Username:strings.ToLower(strings.TrimSpace(req.Username)),DisplayName:display}) }
-func (s *server) issueSession(w http.ResponseWriter, r *http.Request, id uuid.UUID, user userJSON) { token,hash,err:=newSessionToken(); if err!=nil { errorJSON(w,500,"session_failed"); return }; _,err=s.db.Exec(r.Context(),`insert into sessions(id,user_id,token_hash,expires_at) values($1,$2,$3,$4)`,uuid.New(),id,hash,time.Now().Add(30*24*time.Hour)); if err!=nil { errorJSON(w,500,"session_failed"); return }; writeJSON(w,200,authResponse{Token:token,User:user}) }
+func (s *server) issueSession(w http.ResponseWriter, r *http.Request, id uuid.UUID, user userJSON) { token,hash,err:=newSessionToken(); if err!=nil { errorJSON(w,500,"session_failed"); return }
+	// Best-effort cleanup so expired sessions and invites do not accumulate; must not block login.
+	_,_ = s.db.Exec(r.Context(), `delete from sessions where expires_at < now()`)
+	_,_ = s.db.Exec(r.Context(), `delete from invites where expires_at < now()`)
+	_,err=s.db.Exec(r.Context(),`insert into sessions(id,user_id,token_hash,expires_at) values($1,$2,$3,$4)`,uuid.New(),id,hash,time.Now().Add(30*24*time.Hour)); if err!=nil { errorJSON(w,500,"session_failed"); return }; writeJSON(w,200,authResponse{Token:token,User:user}) }
 func (s *server) logout(w http.ResponseWriter, r *http.Request) { raw:=strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ")); h:=tokenHash(raw); _,_ = s.db.Exec(r.Context(),`delete from sessions where token_hash=$1`,h); w.WriteHeader(http.StatusNoContent) }
 func (s *server) me(w http.ResponseWriter, r *http.Request) { var u userJSON; err:=s.db.QueryRow(r.Context(),`select id,username,display_name from app_users where id=$1`,userID(r)).Scan(&u.ID,&u.Username,&u.DisplayName); if err!=nil { errorJSON(w,404,"user_not_found"); return }; writeJSON(w,200,u) }
 
@@ -154,21 +158,19 @@ func (s *server) acceptInvite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"couple_id": cid.String()})
 }
 func (s *server) couple(w http.ResponseWriter, r *http.Request) {
-	uid := userID(r); var cid, a, b uuid.UUID
-	err := s.db.QueryRow(r.Context(), `select id,member_a,member_b from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &a, &b)
+	uid := userID(r); var cid, a, b uuid.UUID; var nicknameA, nicknameB string
+	err := s.db.QueryRow(r.Context(), `select id,member_a,member_b,member_a_nickname,member_b_nickname from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &a, &b, &nicknameA, &nicknameB)
 	if errors.Is(err, pgx.ErrNoRows) { writeJSON(w, 200, nil); return }; if err != nil { errorJSON(w, 500, "database_error"); return }
 	var settings struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 	err = s.db.QueryRow(r.Context(), `select initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max from score_settings where couple_id=$1`, cid).Scan(&settings.Initial, &settings.Min, &settings.Max, &settings.AddMin, &settings.AddMax, &settings.SubtractMin, &settings.SubtractMax)
 	if err != nil { errorJSON(w, 500, "database_error"); return }
 	rows, err := s.db.Query(r.Context(), `select cs.target_user_id,u.username,u.display_name,cs.current_score from couple_scores cs join app_users u on u.id=cs.target_user_id where cs.couple_id=$1`, cid); if err != nil { errorJSON(w, 500, "database_error"); return }; defer rows.Close()
 	type card struct { UserID string `json:"user_id"`; Name string `json:"name"`; Score int `json:"score"` }; cards := []card{}
-	for rows.Next() { var id uuid.UUID; var username, name string; var score int; if err = rows.Scan(&id, &username, &name, &score); err != nil { errorJSON(w, 500, "database_error"); return }; if name == "" { name = username }; cards = append(cards, card{id.String(), name, score}) }
-	nickname := ""
-	column := "member_a_nickname"
-	if uid == b { column = "member_b_nickname" }
-	_ = s.db.QueryRow(r.Context(), `select `+column+` from couples where id=$1`, cid).Scan(&nickname)
+	nickname := nicknameA; if uid == b { nickname = nicknameB }
+	currentName, partnerName := "", ""; partner := other(uid, a, b)
+	for rows.Next() { var id uuid.UUID; var username, name string; var score int; if err = rows.Scan(&id, &username, &name, &score); err != nil { errorJSON(w, 500, "database_error"); return }; if name == "" { name = username }; if id == uid { currentName = name } else if id == partner { partnerName = name }; cards = append(cards, card{id.String(), name, score}) }
 	events := s.loadEvents(r.Context(), cid, r.URL.Query().Get("from"), r.URL.Query().Get("to"), r.URL.Query().Get("keyword"))
-	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": s.displayName(r.Context(), uid), "partner_name": s.displayName(r.Context(), other(uid, a, b)), "partner_nickname": nickname, "cards": cards, "events": events, "settings": settings})
+	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": currentName, "partner_name": partnerName, "partner_nickname": nickname, "cards": cards, "events": events, "settings": settings})
 }
 type eventJSON struct{ID string `json:"id"`;ActorName string `json:"actor_name"`;TargetName string `json:"target_name"`;Delta int `json:"delta"`;ScoreAfter int `json:"score_after"`;Note *string `json:"note"`;CreatedAt time.Time `json:"created_at"`}
 func (s *server) loadEvents(ctx context.Context,cid uuid.UUID, from, to, keyword string)[]eventJSON{from = strings.TrimSpace(from); to = strings.TrimSpace(to); keyword = strings.TrimSpace(keyword); if len([]rune(keyword)) > 80 { keyword = string([]rune(keyword)[:80]) }; args := []any{cid}; where := `e.couple_id=$1`; if from != "" { args = append(args, from); where += fmt.Sprintf(" and e.created_at >= $%d::date", len(args)) }; if to != "" { args = append(args, to); where += fmt.Sprintf(" and e.created_at < ($%d::date + interval '1 day')", len(args)) }; if keyword != "" { args = append(args, "%"+keyword+"%"); where += fmt.Sprintf(" and (e.note ilike $%d or au.display_name ilike $%d or tu.display_name ilike $%d)", len(args), len(args), len(args)) }; query := `select e.id,au.display_name,tu.display_name,e.delta,e.score_after,e.note,e.created_at from score_events e join app_users au on au.id=e.actor_id join app_users tu on tu.id=e.target_user_id where `+where+` order by e.created_at desc limit 200`; rows,err:=s.db.Query(ctx,query,args...);if err!=nil{return []eventJSON{}};defer rows.Close();out:=[]eventJSON{};for rows.Next(){var id uuid.UUID;var a,t string;var d,sa int;var note *string;var at time.Time;if rows.Scan(&id,&a,&t,&d,&sa,&note,&at)==nil{out=append(out,eventJSON{id.String(),a,t,d,sa,note,at})}};return out}

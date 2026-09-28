@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +43,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +81,12 @@ import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ScoreEventItem
 import com.dutu007.favorapp.data.ScorePreset
 import com.dutu007.favorapp.ui.theme.FavorTheme
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 
 private val PinkGradient = Brush.verticalGradient(
     listOf(Color(0xFFFFE0ED), Color(0xFFF5EEFC), Color(0xFFFFFAFC)),
@@ -393,15 +403,16 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     var filter by rememberSaveable { mutableStateOf(0) }
     var keyword by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf("") }
+    var showDatePicker by rememberSaveable { mutableStateOf(false) }
     var pendingDelta by rememberSaveable { mutableStateOf<Int?>(null) }
     BackHandler(enabled = records) { records = false }
-    val deltas = listOf(-snapshot.settings.subtractMax, -snapshot.settings.subtractMin, snapshot.settings.addMin, snapshot.settings.addMax).distinct()
+    val partnerDisplay = snapshot.partnerNickname.ifBlank { snapshot.partnerName }
     val visibleEvents = snapshot.events.filter {
         when (filter) { 1 -> it.delta > 0; 2 -> it.delta < 0; else -> true }
     }
-    LaunchedEffect(records, keyword, date, filter) {
+    LaunchedEffect(records, keyword, date) {
         if (records) {
-            kotlinx.coroutines.delay(300)
+            kotlinx.coroutines.delay(500)
             viewModel.refreshSnapshot(keyword = keyword, date = date)
         }
     }
@@ -462,20 +473,54 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                             }
                         }
                         if (snapshot.events.isEmpty()) item { EmptyEventsCard() }
-                        else items(snapshot.events.take(3), key = { it.id }) { EventCard(it) }
+                        else items(snapshot.events.take(3), key = { it.id }) { EventCard(it, snapshot) }
                     } else {
                         item {
-                            Text("好感度记录", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(8.dp))
-                            Text("按日期和关键词查找你们的记录", color = MaterialTheme.colorScheme.secondary)
-                            Spacer(Modifier.height(16.dp))
-                            AppTextField(keyword, { keyword = it }, "搜索备注或姓名", "⌕")
-                            Spacer(Modifier.height(10.dp))
-                            AppTextField(date, { date = it.take(10) }, "日期（YYYY-MM-DD）", "日", KeyboardType.Ascii)
-                            Spacer(Modifier.height(10.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                listOf("全部", "加分", "减分").forEachIndexed { index, label ->
-                                    FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) })
+                            ElevatedCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(24.dp),
+                                colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+                            ) {
+                                Column(Modifier.padding(18.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("查找记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                        if (keyword.isNotBlank() || date.isNotBlank()) {
+                                            TextButton(onClick = { keyword = ""; date = "" }, enabled = !state.busy) { Text("清空筛选") }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(12.dp))
+                                    AppTextField(keyword, { keyword = it }, "搜索备注或姓名", "⌕")
+                                    Spacer(Modifier.height(10.dp))
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) { showDatePicker = true },
+                                        shape = RoundedCornerShape(17.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    ) {
+                                        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text("日", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(
+                                                if (date.isBlank()) "按日期筛选" else date,
+                                                modifier = Modifier.weight(1f).padding(vertical = 11.dp),
+                                                color = if (date.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            if (date.isNotBlank()) {
+                                                Text("×", fontSize = 20.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.clickable { date = "" }.padding(8.dp))
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(12.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        listOf("全部", "加分", "减分").forEachIndexed { index, label ->
+                                            FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) })
+                                        }
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        if (visibleEvents.size == 200) "最多显示最近 200 条记录" else "共 ${visibleEvents.size} 条记录",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                    )
                                 }
                             }
                         }
@@ -484,15 +529,30 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                 if (snapshot.events.isEmpty()) EmptyEventsCard()
                                 else PairingCard("这里暂时没有记录", "试试切换其他分类，看看你们的日常。") {}
                             }
-                        } else items(visibleEvents, key = { it.id }) { EventCard(it) }
+                        } else items(visibleEvents, key = { it.id }) { EventCard(it, snapshot) }
                     }
                 }
             }
         }
     }
     if (showSettings) SettingsScreen(state, viewModel) { showSettings = false }
+    if (showDatePicker) {
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = parsePickerDate(date))
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    date = pickerState.selectedDateMillis?.let(::formatPickerDate).orEmpty()
+                    showDatePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("取消") } },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
     pendingDelta?.let { delta ->
-        ScoreConfirmDialog(snapshot.partnerName, delta, note, state.busy, onDismiss = { pendingDelta = null }) {
+        ScoreConfirmDialog(partnerDisplay, delta, note, state.busy, onDismiss = { pendingDelta = null }) {
             pendingDelta = null
             viewModel.addScore(delta, note)
             viewModel.setManualDelta("")
@@ -567,12 +627,12 @@ private fun EmptyEventsCard() {
 }
 
 @Composable
-private fun EventCard(event: ScoreEventItem) {
+private fun EventCard(event: ScoreEventItem, snapshot: CoupleSnapshot) {
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.9f))) {
         Column(Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("♥", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 8.dp))
-                Text("${event.actorName} → ${event.targetName}", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("${partnerAwareName(snapshot, event.actorName)} → ${partnerAwareName(snapshot, event.targetName)}", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Text(if (event.delta > 0) "+${event.delta}" else event.delta.toString(), color = if (event.delta > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
             }
             Text("分数变为 ${event.scoreAfter} · ${formatTime(event.createdAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 7.dp))
@@ -580,6 +640,9 @@ private fun EventCard(event: ScoreEventItem) {
         }
     }
 }
+
+private fun partnerAwareName(snapshot: CoupleSnapshot, name: String): String =
+    if (name == snapshot.partnerName && snapshot.partnerNickname.isNotBlank()) snapshot.partnerNickname else name
 
 @Composable
 private fun PresetRow(preset: ScorePreset, onClick: () -> Unit) {
@@ -595,8 +658,9 @@ private fun PresetRow(preset: ScorePreset, onClick: () -> Unit) {
 @Composable
 private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismiss: () -> Unit) {
     var page by rememberSaveable { mutableStateOf("list") }
-    BackHandler { onDismiss() }
+    BackHandler { if (page != "list") page = "list" else onDismiss() }
     if (page == "nickname") { NicknameSettings(state, viewModel) { page = "list" }; return }
+    if (page == "rules") { RulesSettings(state, viewModel) { page = "list" }; return }
     if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
     AppBackground {
         Scaffold(
@@ -613,6 +677,7 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
                 item {
                     SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
                 }
+                item { SettingsRow("记分规则", "初始 ${state.snapshot?.settings?.initialScore ?: 0} 分") { page = "rules" } }
                 item { SettingsRow("添加记录预设", "${state.scorePresets.size} 项") { page = "presets" } }
                 item {
                     Spacer(Modifier.height(10.dp))
@@ -638,7 +703,31 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
 @Composable private fun NicknameSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     var nickname by rememberSaveable { mutableStateOf(state.snapshot?.partnerNickname.orEmpty()) }
     Scaffold(containerColor = Color.Transparent, topBar = { TopAppBar(title = { Text("恋人昵称") }, navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } }) }) { padding ->
-        Column(Modifier.padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡"); Button(onClick = { viewModel.savePartnerNickname(nickname); onBack() }, modifier = Modifier.fillMaxWidth()) { Text("保存") } }
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("这是你对 TA 的专属称呼，只对你自己可见。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡")
+            Notice(state, viewModel::clearNotice)
+            PrimaryAction("保存", state.busy) { viewModel.savePartnerNickname(nickname); onBack() }
+            Text("留空保存即清除昵称，界面会恢复显示对方的名字。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun RulesSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+    val settings = state.snapshot?.settings
+    var initial by rememberSaveable { mutableStateOf((settings?.initialScore ?: 0).toString()) }
+    var min by rememberSaveable { mutableStateOf(settings?.minScore?.toString().orEmpty()) }
+    var max by rememberSaveable { mutableStateOf(settings?.maxScore?.toString().orEmpty()) }
+    Scaffold(containerColor = Color.Transparent, topBar = { TopAppBar(title = { Text("记分规则") }, navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } }) }) { padding ->
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("初始值只会在还没有记录时影响当前分数；留空上下限表示不限制。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            NumberField("初始分数", initial, onValueChange = { initial = it })
+            NumberField("总分下限（可选）", min, onValueChange = { min = it })
+            NumberField("总分上限（可选）", max, onValueChange = { max = it })
+            Notice(state, viewModel::clearNotice)
+            PrimaryAction("保存", state.busy) { viewModel.saveSettings(initial, min, max); onBack() }
+        }
     }
 }
 
@@ -652,28 +741,6 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
             items(state.scorePresets, key = { it.id }) { preset -> Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Text(preset.label, Modifier.weight(1f)); Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), fontWeight = FontWeight.Bold); TextButton(onClick = { viewModel.removePreset(preset.id) }) { Text("删除") } } } }
         }
     }
-}
-
-@Composable
-private fun EmptyPresetCard() {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.72f)) {
-        Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("还没有预设项", fontWeight = FontWeight.SemiBold)
-            Text("添加后会显示在首页的“常用记录”中", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun AccountDialog(busy: Boolean, viewModel: MainViewModel, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(26.dp),
-        title = { Text("设置", fontWeight = FontWeight.Bold) },
-        text = { Text("匹配规则在创建邀请码时确定，当前空间会按这套规则记录分数。", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("返回") } },
-        dismissButton = { TextButton(onClick = { viewModel.signOut(); onDismiss() }, enabled = !busy) { Text("退出登录") } },
-    )
 }
 
 @Composable
@@ -695,31 +762,28 @@ private fun ScoreConfirmDialog(partnerName: String, delta: Int, note: String, bu
 }
 
 @Composable
-private fun SettingsDialog(snapshot: CoupleSnapshot, busy: Boolean, viewModel: MainViewModel, onDismiss: () -> Unit) {
-    var initial by rememberSaveable { mutableStateOf(snapshot.settings.initialScore.toString()) }
-    var min by rememberSaveable { mutableStateOf(snapshot.settings.minScore?.toString().orEmpty()) }
-    var max by rememberSaveable { mutableStateOf(snapshot.settings.maxScore?.toString().orEmpty()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(26.dp),
-        title = { Text("好感度设置", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("初始值只会在还没有记录时影响当前分数；留空上下限表示不限制。", style = MaterialTheme.typography.bodySmall)
-                NumberField("初始值", initial, onValueChange = { initial = it })
-                NumberField("最低值（可选）", min, onValueChange = { min = it })
-                NumberField("最高值（可选）", max, onValueChange = { max = it })
-            }
-        },
-        confirmButton = { Button(onClick = { viewModel.saveSettings(initial, min, max); onDismiss() }, enabled = !busy, shape = RoundedCornerShape(13.dp)) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@Composable
 private fun NumberField(label: String, value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier) {
     OutlinedTextField(value = value, onValueChange = { input -> onValueChange(input.filter { it == '-' || it.isDigit() }) }, label = { Text(label) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(15.dp), modifier = modifier.fillMaxWidth())
 }
 
-private fun formatTime(value: String): String = value.replace('T', ' ').take(16)
+private fun formatTime(value: String): String = runCatching {
+    val parsed = OffsetDateTime.parse(value)
+    parsed.atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+}.getOrDefault(value.replace('T', ' ').take(16))
+
+private fun formatPickerDate(millis: Long): String {
+    val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+    calendar.timeInMillis = millis
+    return String.format(Locale.US, "%04d-%02d-%02d", calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1, calendar.get(Calendar.DAY_OF_MONTH))
+}
+
+private fun parsePickerDate(value: String): Long? {
+    if (value.length != 10) return null
+    return runCatching {
+        val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        calendar.clear()
+        calendar.set(value.substring(0, 4).toInt(), value.substring(5, 7).toInt() - 1, value.substring(8, 10).toInt())
+        calendar.timeInMillis
+    }.getOrNull()
+}
 

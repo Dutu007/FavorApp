@@ -27,7 +27,7 @@ import java.util.UUID
 @Serializable private data class UserDto(val id: String, val username: String, @SerialName("display_name") val displayName: String)
 @Serializable private data class InviteResponse(val code: String)
 @Serializable private data class ScoreCardDto(@SerialName("user_id") val userId: String, val name: String, val score: Int)
-@Serializable private data class EventDto(val id: String, @SerialName("actor_name") val actorName: String, @SerialName("target_name") val targetName: String, val delta: Int, @SerialName("score_after") val scoreAfter: Int, val note: String? = null, @SerialName("created_at") val createdAt: String)
+@Serializable private data class EventDto(val id: String, @SerialName("actor_id") val actorId: String = "", @SerialName("actor_name") val actorName: String, @SerialName("target_name") val targetName: String, val delta: Int, @SerialName("score_after") val scoreAfter: Int, val note: String? = null, @SerialName("created_at") val createdAt: String)
 @Serializable private data class SettingsDto(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, @SerialName("partner_nickname") val partnerNickname: String = "", val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto)
 @Serializable private data class ErrorDto(val error: String)
@@ -54,7 +54,7 @@ class FavorRepository(context: Context) {
     private fun HttpRequestBuilder.json(value: Any) { contentType(ContentType.Application.Json); setBody(value) }
     private suspend inline fun <reified T> HttpResponse.bodyChecked(): T { check(); return body() }
     private suspend fun HttpResponse.check() { if (status.value !in 200..299) { val error = runCatching { body<ErrorDto>() }.getOrNull()?.error; throw ApiException(status.value, error ?: "request_failed") } }
-    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, partnerNickname, cards.map { ScoreCard(it.userId, it.name, it.score) }, events.map { ScoreEventItem(it.id, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax))
+    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, partnerNickname, cards.map { ScoreCard(it.userId, it.name, it.score) }, events.map { ScoreEventItem(it.id, it.actorId, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax))
 }
 
 class ApiException(val statusCode: Int, val code: String) : Exception(code)

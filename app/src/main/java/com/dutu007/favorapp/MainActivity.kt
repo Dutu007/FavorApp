@@ -92,6 +92,9 @@ private val PinkGradient = Brush.verticalGradient(
     listOf(Color(0xFFFFE0ED), Color(0xFFF5EEFC), Color(0xFFFFFAFC)),
 )
 
+// Server caps a query at 200 events; render them in pages of this size.
+private const val RECORDS_PAGE_SIZE = 50
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -152,8 +155,14 @@ private fun LoadingScreen() {
 
 @Composable
 private fun Notice(state: AppUiState, onDismiss: () -> Unit) {
-    val text = state.error ?: state.message ?: return
-    val isError = state.error != null
+    val persistent = state.error != null || state.message != null
+    val text = state.error ?: state.message ?: state.flash ?: return
+    val isError = if (persistent) state.error != null else state.flashError
+    val duration = if (persistent) 10_000L else 1_000L
+    LaunchedEffect(text, isError) {
+        kotlinx.coroutines.delay(duration)
+        onDismiss()
+    }
     Surface(
         modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
         shape = RoundedCornerShape(14.dp),
@@ -296,6 +305,7 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
+                    modifier = Modifier.height(56.dp),
                     title = { Text("连接恋人", fontWeight = FontWeight.Bold) },
                     actions = { TextButton(onClick = { showAccount = true }, enabled = !state.busy) { Text("设置") } },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -401,35 +411,43 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     var note by rememberSaveable { mutableStateOf("") }
     var records by rememberSaveable { mutableStateOf(false) }
     var filter by rememberSaveable { mutableStateOf(0) }
+    var direction by rememberSaveable { mutableStateOf(0) }
     var keyword by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf("") }
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
+    var visibleLimit by rememberSaveable { mutableStateOf(RECORDS_PAGE_SIZE) }
     var pendingDelta by rememberSaveable { mutableStateOf<Int?>(null) }
     BackHandler(enabled = records) { records = false }
     val partnerDisplay = snapshot.partnerNickname.ifBlank { snapshot.partnerName }
-    val visibleEvents = snapshot.events.filter {
-        when (filter) { 1 -> it.delta > 0; 2 -> it.delta < 0; else -> true }
+    val visibleEvents = snapshot.events.filter { event ->
+        val mine = if (event.actorId.isNotBlank()) event.actorId == snapshot.currentUserId else event.actorName == snapshot.currentUserName
+        val directionOk = when (direction) { 1 -> mine; 2 -> !mine; else -> true }
+        val changeOk = when (filter) { 1 -> event.delta > 0; 2 -> event.delta < 0; else -> true }
+        directionOk && changeOk
     }
+    val shownEvents = visibleEvents.take(visibleLimit)
     LaunchedEffect(records, keyword, date) {
         if (records) {
             kotlinx.coroutines.delay(500)
             viewModel.refreshSnapshot(keyword = keyword, date = date)
         }
     }
+    LaunchedEffect(records, keyword, date, filter, direction) { visibleLimit = RECORDS_PAGE_SIZE }
     AppBackground {
         Scaffold(
             containerColor = Color.Transparent,
             bottomBar = {
-                NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
-                    NavigationBarItem(selected = !records, onClick = { records = false }, icon = { Text("♡", fontSize = 26.sp) }, label = { Text("我们的空间") })
-                    NavigationBarItem(selected = records, onClick = { records = true }, icon = { Text("≡", fontSize = 26.sp) }, label = { Text("心动记录") })
+                NavigationBar(modifier = Modifier.height(60.dp), containerColor = Color.White, tonalElevation = 0.dp) {
+                    NavigationBarItem(selected = !records, onClick = { records = false }, icon = { Text("♡", fontSize = 24.sp) })
+                    NavigationBarItem(selected = records, onClick = { records = true }, icon = { Text("☰", fontSize = 24.sp) })
                 }
             },
             topBar = {
                 TopAppBar(
+                    modifier = Modifier.height(56.dp),
                     title = { Text(if (records) "好感度记录" else "我们的空间", fontWeight = FontWeight.Bold) },
                     actions = {
-                        TextButton(onClick = viewModel::refreshSnapshot, enabled = !state.busy) { Text("刷新") }
+                        TextButton(onClick = { viewModel.refreshSnapshot(notify = true) }, enabled = !state.busy) { Text("刷新") }
                         TextButton(onClick = { showSettings = true }, enabled = !state.busy) { Text("设置") }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -484,12 +502,12 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                 Column(Modifier.padding(18.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text("查找记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                        if (keyword.isNotBlank() || date.isNotBlank()) {
-                                            TextButton(onClick = { keyword = ""; date = "" }, enabled = !state.busy) { Text("清空筛选") }
+                                        if (keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0) {
+                                            TextButton(onClick = { keyword = ""; date = ""; filter = 0; direction = 0 }, enabled = !state.busy) { Text("清空筛选") }
                                         }
                                     }
                                     Spacer(Modifier.height(12.dp))
-                                    AppTextField(keyword, { keyword = it }, "搜索备注或姓名", "⌕")
+                                    AppTextField(keyword, { keyword = it }, "搜索备注", "⌕")
                                     Spacer(Modifier.height(10.dp))
                                     Surface(
                                         modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) { showDatePicker = true },
@@ -510,26 +528,37 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                         }
                                     }
                                     Spacer(Modifier.height(12.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        listOf("全部", "加分", "减分").forEachIndexed { index, label ->
-                                            FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) })
-                                        }
-                                    }
+                                    FilterChipsRow("方向", listOf("全部", "我→对方", "对方→我"), direction) { direction = it }
+                                    Spacer(Modifier.height(8.dp))
+                                    FilterChipsRow("变动", listOf("全部", "加分", "减分"), filter) { filter = it }
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        if (visibleEvents.size == 200) "最多显示最近 200 条记录" else "共 ${visibleEvents.size} 条记录",
+                                        if (visibleEvents.size == 200) "最多显示最近 200 条记录，可用筛选缩小范围" else "共 ${visibleEvents.size} 条记录",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.secondary,
                                     )
                                 }
                             }
                         }
+                        item { Notice(state, viewModel::clearNotice) }
                         if (visibleEvents.isEmpty()) {
                             item {
                                 if (snapshot.events.isEmpty()) EmptyEventsCard()
-                                else PairingCard("这里暂时没有记录", "试试切换其他分类，看看你们的日常。") {}
+                                else PairingCard("这里暂时没有记录", "试试切换其他筛选，看看你们的日常。") {}
                             }
-                        } else items(visibleEvents, key = { it.id }) { EventCard(it, snapshot) }
+                        } else {
+                            items(shownEvents, key = { it.id }) { EventCard(it, snapshot) }
+                            if (visibleLimit < visibleEvents.size) {
+                                item {
+                                    OutlinedButton(
+                                        onClick = { visibleLimit += RECORDS_PAGE_SIZE },
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        shape = RoundedCornerShape(16.dp),
+                                        enabled = !state.busy,
+                                    ) { Text("加载更多（还有 ${visibleEvents.size - visibleLimit} 条）") }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -662,28 +691,17 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     if (page == "nickname") { NicknameSettings(state, viewModel) { page = "list" }; return }
     if (page == "rules") { RulesSettings(state, viewModel) { page = "list" }; return }
     if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
-    AppBackground {
-        Scaffold(
-            containerColor = Color.Transparent,
-            topBar = {
-                TopAppBar(
-                    title = { Text("设置", fontWeight = FontWeight.Bold) },
-                    navigationIcon = { TextButton(onClick = onDismiss) { Text("‹", fontSize = 30.sp) } },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                )
-            },
-        ) { padding ->
-            LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                item {
-                    SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
-                }
-                item { SettingsRow("记分规则", "初始 ${state.snapshot?.settings?.initialScore ?: 0} 分") { page = "rules" } }
-                item { SettingsRow("添加记录预设", "${state.scorePresets.size} 项") { page = "presets" } }
-                item {
-                    Spacer(Modifier.height(10.dp))
-                    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) {
-                        TextButton(onClick = { viewModel.signOut(); onDismiss() }, modifier = Modifier.fillMaxWidth(), enabled = !state.busy) { Text("退出登录", color = MaterialTheme.colorScheme.error) }
-                    }
+    SettingsPageScaffold("设置", onDismiss) { padding ->
+        LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item {
+                SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
+            }
+            item { SettingsRow("记分规则", "初始 ${state.snapshot?.settings?.initialScore ?: 0} 分") { page = "rules" } }
+            item { SettingsRow("添加记录预设", "${state.scorePresets.size} 项") { page = "presets" } }
+            item {
+                Spacer(Modifier.height(10.dp))
+                Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) {
+                    TextButton(onClick = { viewModel.signOut(); onDismiss() }, modifier = Modifier.fillMaxWidth(), enabled = !state.busy) { Text("退出登录", color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
@@ -699,11 +717,41 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     }
 }
 
+@Composable
+private fun FilterChipsRow(label: String, options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.width(32.dp))
+        options.forEachIndexed { index, option ->
+            FilterChip(selected = selected == index, onClick = { onSelect(index) }, label = { Text(option) })
+        }
+    }
+}
+
+// Opaque scaffold for settings pages; drawn over HomeScreen, so it must fully cover it.
 @OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Composable BoxScope.(PaddingValues) -> Unit) {
+    AppBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    modifier = Modifier.height(56.dp),
+                    title = { Text(title, fontWeight = FontWeight.Bold) },
+                    navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                )
+            },
+        ) { padding ->
+            Box(Modifier.fillMaxSize()) { content(padding) }
+        }
+    }
+}
+
 @Composable private fun NicknameSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     var nickname by rememberSaveable { mutableStateOf(state.snapshot?.partnerNickname.orEmpty()) }
-    Scaffold(containerColor = Color.Transparent, topBar = { TopAppBar(title = { Text("恋人昵称") }, navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } }) }) { padding ->
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    SettingsPageScaffold("恋人昵称", onBack) { padding ->
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("这是你对 TA 的专属称呼，只对你自己可见。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡")
             Notice(state, viewModel::clearNotice)
@@ -713,14 +761,13 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun RulesSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     val settings = state.snapshot?.settings
     var initial by rememberSaveable { mutableStateOf((settings?.initialScore ?: 0).toString()) }
     var min by rememberSaveable { mutableStateOf(settings?.minScore?.toString().orEmpty()) }
     var max by rememberSaveable { mutableStateOf(settings?.maxScore?.toString().orEmpty()) }
-    Scaffold(containerColor = Color.Transparent, topBar = { TopAppBar(title = { Text("记分规则") }, navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } }) }) { padding ->
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    SettingsPageScaffold("记分规则", onBack) { padding ->
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("初始值只会在还没有记录时影响当前分数；留空上下限表示不限制。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             NumberField("初始分数", initial, onValueChange = { initial = it })
             NumberField("总分下限（可选）", min, onValueChange = { min = it })
@@ -731,9 +778,8 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun PresetSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
-    Scaffold(containerColor = Color.Transparent, topBar = { TopAppBar(title = { Text("添加记录预设") }, navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } }) }) { padding ->
+    SettingsPageScaffold("添加记录预设", onBack) { padding ->
         LazyColumn(Modifier.padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
             item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "名称，例如：主动报备", "♡") }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset) { Text("添加") } } }

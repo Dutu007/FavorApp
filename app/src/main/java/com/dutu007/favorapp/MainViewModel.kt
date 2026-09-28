@@ -43,6 +43,8 @@ data class AppUiState(
     val snapshot: CoupleSnapshot? = null,
     val message: String? = null,
     val error: String? = null,
+    val flash: String? = null,
+    val flashError: Boolean = false,
 )
 
 class MainViewModel : ViewModel() {
@@ -113,7 +115,7 @@ class MainViewModel : ViewModel() {
         preferences.edit().putString("score_presets", array.toString()).apply()
         _uiState.update { it.copy(scorePresets = presets) }
     }
-    fun clearNotice() = _uiState.update { it.copy(message = null, error = null) }
+    fun clearNotice() = _uiState.update { it.copy(message = null, error = null, flash = null, flashError = false) }
 
     fun savePartnerNickname(nickname: String) {
         val value = nickname.trim()
@@ -137,12 +139,27 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun refreshSnapshot(keyword: String = "", date: String = "") {
+    fun refreshSnapshot(keyword: String = "", date: String = "", notify: Boolean = false) {
         if (repository.currentUserId() == null) {
             _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
             return
         }
-        runBusy { loadSnapshot(keyword, date) }
+        viewModelScope.launch {
+            _uiState.update { it.copy(busy = true, error = null, message = null, flash = null, flashError = false) }
+            try {
+                loadSnapshot(keyword, date)
+                if (notify) _uiState.update { it.copy(flash = "刷新成功") }
+            } catch (error: Exception) {
+                if (error is ApiException && error.statusCode == 401) {
+                    repository.clearSession()
+                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                }
+                if (notify) _uiState.update { it.copy(flash = "刷新失败", flashError = true) }
+                else _uiState.update { it.copy(error = error.userMessage()) }
+            } finally {
+                _uiState.update { it.copy(busy = false) }
+            }
+        }
     }
 
     fun submitAuth() {

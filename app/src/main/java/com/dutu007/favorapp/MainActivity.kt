@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dutu007.favorapp.data.CoupleSnapshot
+import com.dutu007.favorapp.data.PendingRuleRequest
 import com.dutu007.favorapp.data.ScoreEventItem
 import com.dutu007.favorapp.data.ScorePreset
 import com.dutu007.favorapp.ui.theme.FavorTheme
@@ -305,7 +306,6 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
-                    modifier = Modifier.height(56.dp),
                     title = { Text("连接恋人", fontWeight = FontWeight.Bold) },
                     actions = { TextButton(onClick = { showAccount = true }, enabled = !state.busy) { Text("设置") } },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -417,6 +417,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
     var visibleLimit by rememberSaveable { mutableStateOf(RECORDS_PAGE_SIZE) }
     var pendingDelta by rememberSaveable { mutableStateOf<Int?>(null) }
+    var pendingNote by rememberSaveable { mutableStateOf("") }
     BackHandler(enabled = records) { records = false }
     val partnerDisplay = snapshot.partnerNickname.ifBlank { snapshot.partnerName }
     val visibleEvents = snapshot.events.filter { event ->
@@ -444,7 +445,6 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             },
             topBar = {
                 TopAppBar(
-                    modifier = Modifier.height(56.dp),
                     title = { Text(if (records) "好感度记录" else "我们的空间", fontWeight = FontWeight.Bold) },
                     actions = {
                         TextButton(onClick = { viewModel.refreshSnapshot(notify = true) }, enabled = !state.busy) { Text("刷新") }
@@ -470,14 +470,25 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                 Spacer(Modifier.height(16.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                     NumberField("加分 / 扣分值", state.manualDelta, viewModel::setManualDelta, Modifier.weight(1f))
-                                    Button(onClick = { pendingDelta = viewModel.validateManualDelta() }, enabled = !state.busy, modifier = Modifier.height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("记录") }
+                                    Button(
+                                        onClick = {
+                                            val delta = viewModel.validateManualDelta()
+                                            if (delta != null) { pendingDelta = delta; pendingNote = note.trim() }
+                                        },
+                                        enabled = !state.busy, modifier = Modifier.height(54.dp), shape = RoundedCornerShape(16.dp),
+                                    ) { Text("记录") }
                                 }
                                 if (state.scorePresets.isNotEmpty()) {
                                     Spacer(Modifier.height(18.dp))
                                     Text("常用记录", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                                     Spacer(Modifier.height(8.dp))
                                     state.scorePresets.forEach { preset ->
-                                        PresetRow(preset) { pendingDelta = preset.delta }
+                                        PresetRow(preset) {
+                                            if (viewModel.validatePresetDelta(preset.delta)) {
+                                                pendingDelta = preset.delta
+                                                pendingNote = note.trim().ifBlank { preset.label }
+                                            }
+                                        }
                                     }
                                 }
                                 Spacer(Modifier.height(10.dp))
@@ -507,7 +518,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                         }
                                     }
                                     Spacer(Modifier.height(12.dp))
-                                    AppTextField(keyword, { keyword = it }, "搜索备注", "⌕")
+                                    AppTextField(keyword, { keyword = it }, "搜索备注内容", "⌕")
                                     Spacer(Modifier.height(10.dp))
                                     Surface(
                                         modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) { showDatePicker = true },
@@ -528,9 +539,9 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                         }
                                     }
                                     Spacer(Modifier.height(12.dp))
-                                    FilterChipsRow("方向", listOf("全部", "我→对方", "对方→我"), direction) { direction = it }
+                                    FilterChipsRow(listOf("全部", "我→对方", "对方→我"), direction) { direction = it }
                                     Spacer(Modifier.height(8.dp))
-                                    FilterChipsRow("变动", listOf("全部", "加分", "减分"), filter) { filter = it }
+                                    FilterChipsRow(listOf("全部", "加分", "减分"), filter) { filter = it }
                                     Spacer(Modifier.height(8.dp))
                                     Text(
                                         if (visibleEvents.size == 200) "最多显示最近 200 条记录，可用筛选缩小范围" else "共 ${visibleEvents.size} 条记录",
@@ -581,11 +592,12 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         }
     }
     pendingDelta?.let { delta ->
-        ScoreConfirmDialog(partnerDisplay, delta, note, state.busy, onDismiss = { pendingDelta = null }) {
+        ScoreConfirmDialog(partnerDisplay, delta, pendingNote, state.busy, onDismiss = { pendingDelta = null }) {
             pendingDelta = null
-            viewModel.addScore(delta, note)
+            viewModel.addScore(delta, pendingNote)
             viewModel.setManualDelta("")
             note = ""
+            pendingNote = ""
         }
     }
 }
@@ -718,9 +730,8 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
 }
 
 @Composable
-private fun FilterChipsRow(label: String, options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.width(32.dp))
+private fun FilterChipsRow(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEachIndexed { index, option ->
             FilterChip(selected = selected == index, onClick = { onSelect(index) }, label = { Text(option) })
         }
@@ -736,7 +747,6 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
-                    modifier = Modifier.height(56.dp),
                     title = { Text(title, fontWeight = FontWeight.Bold) },
                     navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -762,18 +772,69 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 }
 
 @Composable private fun RulesSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+    val pending = state.snapshot?.pendingRules
+    SettingsPageScaffold("记分规则", onBack) { padding ->
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Notice(state, viewModel::clearNotice)
+            if (pending != null) {
+                PendingRulesCard(state, pending, viewModel)
+            } else {
+                RulesForm(state, viewModel, onBack)
+            }
+        }
+    }
+}
+
+@Composable private fun PendingRulesCard(state: AppUiState, pending: PendingRuleRequest, viewModel: MainViewModel) {
+    val mine = pending.requesterId == state.snapshot?.currentUserId
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = 0.94f)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(if (mine) "等待对方同意" else "对方发来修改请求", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "初始分数 ${pending.initialScore} · 总分下限 ${pending.minScore ?: "无"} · 总分上限 ${pending.maxScore ?: "无"}\n单次加分 ${pending.addMin}-${pending.addMax} · 单次扣分 ${pending.subtractMin}-${pending.subtractMax}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (mine) {
+                Text("不想等了可以撤销，撤销后可重新发起。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(onClick = viewModel::cancelRulesRequest, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("撤销请求") }
+            } else {
+                Text("同意后新规则立即生效，双方共用一套规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = viewModel::acceptRulesRequest, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text("同意") }
+                    OutlinedButton(onClick = viewModel::rejectRulesRequest, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text("拒绝") }
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun RulesForm(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     val settings = state.snapshot?.settings
     var initial by rememberSaveable { mutableStateOf((settings?.initialScore ?: 0).toString()) }
     var min by rememberSaveable { mutableStateOf(settings?.minScore?.toString().orEmpty()) }
     var max by rememberSaveable { mutableStateOf(settings?.maxScore?.toString().orEmpty()) }
-    SettingsPageScaffold("记分规则", onBack) { padding ->
-        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("初始值只会在还没有记录时影响当前分数；留空上下限表示不限制。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            NumberField("初始分数", initial, onValueChange = { initial = it })
-            NumberField("总分下限（可选）", min, onValueChange = { min = it })
-            NumberField("总分上限（可选）", max, onValueChange = { max = it })
-            Notice(state, viewModel::clearNotice)
-            PrimaryAction("保存", state.busy) { viewModel.saveSettings(initial, min, max); onBack() }
+    var addMin by rememberSaveable { mutableStateOf((settings?.addMin ?: 1).toString()) }
+    var addMax by rememberSaveable { mutableStateOf((settings?.addMax ?: 5).toString()) }
+    var subtractMin by rememberSaveable { mutableStateOf((settings?.subtractMin ?: 1).toString()) }
+    var subtractMax by rememberSaveable { mutableStateOf((settings?.subtractMax ?: 5).toString()) }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("修改需要对方同意后才会生效，双方共用一套规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        NumberField("初始分数", initial, onValueChange = { initial = it })
+        NumberField("总分下限（可选）", min, onValueChange = { min = it })
+        NumberField("总分上限（可选）", max, onValueChange = { max = it })
+        Text("单次加分范围（绝对值 1-100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NumberField("最小", addMin, onValueChange = { addMin = it }, Modifier.weight(1f))
+            NumberField("最大", addMax, onValueChange = { addMax = it }, Modifier.weight(1f))
+        }
+        Text("单次扣分范围（绝对值 1-100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NumberField("最小", subtractMin, onValueChange = { subtractMin = it }, Modifier.weight(1f))
+            NumberField("最大", subtractMax, onValueChange = { subtractMax = it }, Modifier.weight(1f))
+        }
+        PrimaryAction("请求修改", state.busy) {
+            viewModel.requestRulesChange(initial, min, max, addMin, addMax, subtractMin, subtractMax)
+            onBack()
         }
     }
 }
@@ -781,7 +842,8 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 @Composable private fun PresetSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     SettingsPageScaffold("添加记录预设", onBack) { padding ->
         LazyColumn(Modifier.padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
-            item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "名称，例如：主动报备", "♡") }
+            item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "备注，例如：给你做了一顿饭", "♡") }
+            item { Text("备注最多 $NOTE_MAX_LENGTH 个字，常用记录最多保存 $PRESET_MAX_COUNT 条（当前 ${state.scorePresets.size}/$PRESET_MAX_COUNT）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset) { Text("添加") } } }
             item { Notice(state, viewModel::clearNotice) }
             items(state.scorePresets, key = { it.id }) { preset -> Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Text(preset.label, Modifier.weight(1f)); Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), fontWeight = FontWeight.Bold); TextButton(onClick = { viewModel.removePreset(preset.id) }) { Text("删除") } } } }

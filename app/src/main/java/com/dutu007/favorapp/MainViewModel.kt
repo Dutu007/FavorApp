@@ -6,6 +6,7 @@ import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ApiException
 import com.dutu007.favorapp.data.FavorRepository
 import com.dutu007.favorapp.data.ScoreRule
+import com.dutu007.favorapp.data.ScoreSettingRow
 import com.dutu007.favorapp.data.ScorePreset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,9 @@ import org.json.JSONObject
 import java.util.UUID
 
 enum class AuthMode { SIGN_IN, SIGN_UP }
+
+const val NOTE_MAX_LENGTH = 200
+const val PRESET_MAX_COUNT = 5
 
 data class AppUiState(
     val loading: Boolean = true,
@@ -78,10 +82,11 @@ class MainViewModel : ViewModel() {
         val state = _uiState.value
         val label = state.presetLabel.trim()
         val delta = state.presetDelta.toIntOrNull()
-        if (label.isBlank() || label.length > 24 || delta == null || delta == 0 || kotlin.math.abs(delta) > 100) {
-            _uiState.update { it.copy(error = "请输入名称，并填写 1 到 100 之间的加分或扣分值") }; return
-        }
-        if (state.scorePresets.size >= 12) { _uiState.update { it.copy(error = "最多保存 12 个预设项") }; return }
+        if (label.isBlank()) { _uiState.update { it.copy(error = "请填写备注内容") }; return }
+        if (label.length > NOTE_MAX_LENGTH) { _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }; return }
+        if (delta == null || delta == 0) { _uiState.update { it.copy(error = "请填写加分或扣分值，负数表示扣分") }; return }
+        if (!validatePresetDelta(delta)) { return }
+        if (state.scorePresets.size >= PRESET_MAX_COUNT) { _uiState.update { it.copy(error = "常用记录最多保存 $PRESET_MAX_COUNT 条") }; return }
         savePresets(state.scorePresets + ScorePreset(UUID.randomUUID().toString(), label, delta))
         _uiState.update { it.copy(presetLabel = "", presetDelta = "", message = "预设项已添加", error = null) }
     }
@@ -90,12 +95,32 @@ class MainViewModel : ViewModel() {
         _uiState.update { it.copy(message = "预设项已删除", error = null) }
     }
     fun validateManualDelta(): Int? {
+        val settings = _uiState.value.snapshot?.settings
         val value = _uiState.value.manualDelta.toIntOrNull()
-        if (value == null || value == 0 || kotlin.math.abs(value) > 100) {
-            _uiState.update { it.copy(error = "请输入 1 到 100 之间的分数，负数表示扣分") }; return null
+        if (value == null || value == 0) {
+            _uiState.update { it.copy(error = "请输入加分或扣分值，负数表示扣分") }; return null
+        }
+        if (settings == null) return value
+        if (!deltaWithinRules(value, settings)) {
+            _uiState.update { it.copy(error = deltaRangeError(value, settings)) }; return null
         }
         return value
     }
+    fun validatePresetDelta(delta: Int): Boolean {
+        val settings = _uiState.value.snapshot?.settings
+        if (delta == 0) { _uiState.update { it.copy(error = "预设分值不能为 0") }; return false }
+        if (settings == null) return true
+        if (!deltaWithinRules(delta, settings)) {
+            _uiState.update { it.copy(error = deltaRangeError(delta, settings)) }; return false
+        }
+        return true
+    }
+    private fun deltaWithinRules(value: Int, settings: ScoreSettingRow): Boolean {
+        val amount = kotlin.math.abs(value)
+        return if (value > 0) amount in settings.addMin..settings.addMax else amount in settings.subtractMin..settings.subtractMax
+    }
+    private fun deltaRangeError(value: Int, settings: ScoreSettingRow): String =
+        if (value > 0) "超出当前单次加分范围（${settings.addMin}-${settings.addMax}）" else "超出当前单次扣分范围（${settings.subtractMin}-${settings.subtractMax}）"
 
     private fun loadPresets() {
         val saved = preferences.getString("score_presets", null) ?: return
@@ -105,7 +130,7 @@ class MainViewModel : ViewModel() {
                 val item = array.getJSONObject(index)
                 ScorePreset(item.getString("id"), item.getString("label"), item.getInt("delta"))
             }
-        }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()).take(PRESET_MAX_COUNT)
         _uiState.update { it.copy(scorePresets = presets) }
     }
 
@@ -269,18 +294,25 @@ class MainViewModel : ViewModel() {
             _uiState.update { it.copy(error = "暂时找不到恋人账户") }
             return
         }
+        if (note != null && note.length > NOTE_MAX_LENGTH) {
+            _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }
+            return
+        }
         runBusy {
             repository.addScore(delta, note)
             loadSnapshot()
         }
     }
 
-    fun saveSettings(initialText: String, minText: String, maxText: String) {
-        val snapshot = _uiState.value.snapshot ?: return
+    fun requestRulesChange(initialText: String, minText: String, maxText: String, addMinText: String, addMaxText: String, subtractMinText: String, subtractMaxText: String) {
         val initial = initialText.toIntOrNull()
         val min = minText.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
         val max = maxText.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
-        if (initial == null || (minText.isNotBlank() && min == null) || (maxText.isNotBlank() && max == null)) {
+        val addMin = addMinText.toIntOrNull()
+        val addMax = addMaxText.toIntOrNull()
+        val subtractMin = subtractMinText.toIntOrNull()
+        val subtractMax = subtractMaxText.toIntOrNull()
+        if (initial == null || addMin == null || addMax == null || subtractMin == null || subtractMax == null || (minText.isNotBlank() && min == null) || (maxText.isNotBlank() && max == null)) {
             _uiState.update { it.copy(error = "分数设置必须是整数") }
             return
         }
@@ -288,10 +320,44 @@ class MainViewModel : ViewModel() {
             _uiState.update { it.copy(error = "最低分不能大于最高分") }
             return
         }
+        if (addMin !in 1..100 || addMax !in addMin..100) {
+            _uiState.update { it.copy(error = "单次加分绝对值范围需为 1-100，且最小值不能大于最大值") }
+            return
+        }
+        if (subtractMin !in 1..100 || subtractMax !in subtractMin..100) {
+            _uiState.update { it.copy(error = "单次扣分绝对值范围需为 1-100，且最小值不能大于最大值") }
+            return
+        }
         runBusy {
-            // Keep the per-invite add/subtract ranges; only the score bounds change here.
-            repository.updateScoreSettings(initial, min, max, snapshot.settings.addMin, snapshot.settings.addMax, snapshot.settings.subtractMin, snapshot.settings.subtractMax)
-            _uiState.update { it.copy(message = "分数设置已保存") }
+            repository.createRulesRequest(initial, min, max, addMin, addMax, subtractMin, subtractMax)
+            _uiState.update { it.copy(message = "修改请求已发送，等待对方同意") }
+            loadSnapshot()
+        }
+    }
+
+    fun acceptRulesRequest() {
+        val id = _uiState.value.snapshot?.pendingRules?.id ?: return
+        runBusy {
+            repository.acceptRulesRequest(id)
+            _uiState.update { it.copy(message = "已同意对方的记分规则修改") }
+            loadSnapshot()
+        }
+    }
+
+    fun rejectRulesRequest() {
+        val id = _uiState.value.snapshot?.pendingRules?.id ?: return
+        runBusy {
+            repository.rejectRulesRequest(id)
+            _uiState.update { it.copy(message = "已拒绝对方的记分规则修改") }
+            loadSnapshot()
+        }
+    }
+
+    fun cancelRulesRequest() {
+        val id = _uiState.value.snapshot?.pendingRules?.id ?: return
+        runBusy {
+            repository.cancelRulesRequest(id)
+            _uiState.update { it.copy(message = "修改请求已撤销") }
             loadSnapshot()
         }
     }
@@ -316,7 +382,20 @@ class MainViewModel : ViewModel() {
     private suspend fun loadSnapshot(keyword: String = "", date: String = "") {
         val authenticated = repository.currentUserId() != null
         val snapshot = repository.loadSnapshot(from = date, to = date, keyword = keyword)
+        notifyRuleDecision(snapshot)
         _uiState.update { it.copy(loading = false, authenticated = authenticated, snapshot = snapshot) }
+    }
+
+    // Show the outcome of a rule change request once per decision, remembered across restarts.
+    private fun notifyRuleDecision(snapshot: CoupleSnapshot?) {
+        val decision = snapshot?.latestRuleDecision ?: return
+        val at = runCatching { java.time.OffsetDateTime.parse(decision.respondedAt).toInstant().toEpochMilli() }.getOrNull() ?: return
+        if (at <= preferences.getLong("rules_decision_seen_at", 0L)) return
+        preferences.edit().putLong("rules_decision_seen_at", at).apply()
+        if (decision.requesterId == snapshot.currentUserId) {
+            val text = if (decision.status == "accepted") "对方同意了你的记分规则修改" else "对方拒绝了你的记分规则修改"
+            _uiState.update { it.copy(message = text) }
+        }
     }
 
     private fun Exception.userMessage(): String {
@@ -330,6 +409,12 @@ class MainViewModel : ViewModel() {
             raw.contains("add_delta_out_of_range", ignoreCase = true) -> "这次加分不在单次加分范围内"
             raw.contains("subtract_delta_out_of_range", ignoreCase = true) -> "这次扣分不在单次扣分范围内"
             raw.contains("range_does_not_include_current_score", ignoreCase = true) -> "新的上下限不包含当前分数"
+            raw.contains("request_pending", ignoreCase = true) -> "已有一个等待对方处理的修改请求"
+            raw.contains("request_already_handled", ignoreCase = true) -> "该修改请求已被处理"
+            raw.contains("request_not_pending", ignoreCase = true) -> "该请求已不在等待状态"
+            raw.contains("request_not_found", ignoreCase = true) -> "修改请求不存在"
+            raw.contains("cannot_respond_own_request", ignoreCase = true) -> "不能处理自己发起的请求"
+            raw.contains("note_too_long", ignoreCase = true) -> "备注最多 200 个字"
             raw.contains("invalid_credentials", ignoreCase = true) -> "账号或密码错误"
             raw.contains("username_taken", ignoreCase = true) -> "账号已被注册"
             raw.contains("initial_score_outside_range", ignoreCase = true) -> "初始分数不在上下限范围内"

@@ -47,7 +47,6 @@ type loginRequest struct { Username, Password string }
 type inviteRequest struct { Code string `json:"code"` }
 type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 type scoreRequest struct { Delta int `json:"delta"`; Note string `json:"note"`; IdempotencyKey string `json:"idempotency_key"` }
-type settingsRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 type nicknameRequest struct { Nickname string `json:"nickname"` }
 
 type userJSON struct { ID string `json:"id"`; Username string `json:"username"`; DisplayName string `json:"display_name"` }
@@ -81,7 +80,10 @@ func main() {
 	mux.Handle("POST /api/v1/invites/accept", s.auth(http.HandlerFunc(s.acceptInvite)))
 	mux.Handle("GET /api/v1/couple", s.auth(http.HandlerFunc(s.couple)))
 	mux.Handle("POST /api/v1/scores/events", s.auth(http.HandlerFunc(s.addScore)))
-	mux.Handle("PUT /api/v1/score-settings", s.auth(http.HandlerFunc(s.updateSettings)))
+	mux.Handle("POST /api/v1/score-settings/requests", s.auth(http.HandlerFunc(s.createRulesRequest)))
+	mux.Handle("POST /api/v1/score-settings/requests/{id}/accept", s.auth(http.HandlerFunc(s.acceptRulesRequest)))
+	mux.Handle("POST /api/v1/score-settings/requests/{id}/reject", s.auth(http.HandlerFunc(s.rejectRulesRequest)))
+	mux.Handle("POST /api/v1/score-settings/requests/{id}/cancel", s.auth(http.HandlerFunc(s.cancelRulesRequest)))
 	mux.Handle("GET /api/v1/score-events", s.auth(http.HandlerFunc(s.events)))
 	mux.Handle("PUT /api/v1/couple/nickname", s.auth(http.HandlerFunc(s.updateNickname)))
 
@@ -170,14 +172,20 @@ func (s *server) couple(w http.ResponseWriter, r *http.Request) {
 	currentName, partnerName := "", ""; partner := other(uid, a, b)
 	for rows.Next() { var id uuid.UUID; var username, name string; var score int; if err = rows.Scan(&id, &username, &name, &score); err != nil { errorJSON(w, 500, "database_error"); return }; if name == "" { name = username }; if id == uid { currentName = name } else if id == partner { partnerName = name }; cards = append(cards, card{id.String(), name, score}) }
 	events := s.loadEvents(r.Context(), cid, r.URL.Query().Get("from"), r.URL.Query().Get("to"), r.URL.Query().Get("keyword"))
-	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": currentName, "partner_name": partnerName, "partner_nickname": nickname, "cards": cards, "events": events, "settings": settings})
+	var pending *pendingRulesJSON
+	var pendingRow pendingRulesJSON
+	if e := s.db.QueryRow(r.Context(), `select id,requester_id,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max,created_at from rule_change_requests where couple_id=$1 and status='pending' order by created_at desc limit 1`, cid).Scan(&pendingRow.ID, &pendingRow.RequesterID, &pendingRow.Initial, &pendingRow.Min, &pendingRow.Max, &pendingRow.AddMin, &pendingRow.AddMax, &pendingRow.SubtractMin, &pendingRow.SubtractMax, &pendingRow.CreatedAt); e == nil { pending = &pendingRow }
+	var decision *ruleDecisionJSON
+	var decisionRow ruleDecisionJSON
+	if e := s.db.QueryRow(r.Context(), `select requester_id,status,responded_at from rule_change_requests where couple_id=$1 and status in ('accepted','rejected') and responded_at is not null order by responded_at desc limit 1`, cid).Scan(&decisionRow.RequesterID, &decisionRow.Status, &decisionRow.RespondedAt); e == nil { decision = &decisionRow }
+	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": currentName, "partner_name": partnerName, "partner_nickname": nickname, "cards": cards, "events": events, "settings": settings, "pending_rules": pending, "latest_rule_decision": decision})
 }
 type eventJSON struct{ID string `json:"id"`;ActorID string `json:"actor_id"`;ActorName string `json:"actor_name"`;TargetName string `json:"target_name"`;Delta int `json:"delta"`;ScoreAfter int `json:"score_after"`;Note *string `json:"note"`;CreatedAt time.Time `json:"created_at"`}
 func (s *server) loadEvents(ctx context.Context,cid uuid.UUID, from, to, keyword string)[]eventJSON{from = strings.TrimSpace(from); to = strings.TrimSpace(to); keyword = strings.TrimSpace(keyword); if len([]rune(keyword)) > 80 { keyword = string([]rune(keyword)[:80]) }; args := []any{cid}; where := `e.couple_id=$1`; if from != "" { args = append(args, from); where += fmt.Sprintf(" and e.created_at >= $%d::date", len(args)) }; if to != "" { args = append(args, to); where += fmt.Sprintf(" and e.created_at < ($%d::date + interval '1 day')", len(args)) }; if keyword != "" { args = append(args, "%"+keyword+"%"); where += fmt.Sprintf(" and e.note ilike $%d", len(args)) }; query := `select e.id,e.actor_id,au.display_name,tu.display_name,e.delta,e.score_after,e.note,e.created_at from score_events e join app_users au on au.id=e.actor_id join app_users tu on tu.id=e.target_user_id where `+where+` order by e.created_at desc limit 200`; rows,err:=s.db.Query(ctx,query,args...);if err!=nil{return []eventJSON{}};defer rows.Close();out:=[]eventJSON{};for rows.Next(){var id,actor uuid.UUID;var a,t string;var d,sa int;var note *string;var at time.Time;if rows.Scan(&id,&actor,&a,&t,&d,&sa,&note,&at)==nil{out=append(out,eventJSON{id.String(),actor.String(),a,t,d,sa,note,at})}};return out}
 func (s *server) events(w http.ResponseWriter,r *http.Request){var cid uuid.UUID;err:=s.db.QueryRow(r.Context(),`select id from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid);if err!=nil{writeJSON(w,200,[]eventJSON{});return};writeJSON(w,200,s.loadEvents(r.Context(),cid,r.URL.Query().Get("from"),r.URL.Query().Get("to"),r.URL.Query().Get("keyword")))}
 func (s *server) updateNickname(w http.ResponseWriter, r *http.Request) { var req nicknameRequest; if !decodeJSON(w,r,&req) { return }; nickname := strings.TrimSpace(req.Nickname); if len([]rune(nickname)) > 8 { errorJSON(w,400,"nickname_too_long"); return }; var cid,a,b uuid.UUID; if err:=s.db.QueryRow(r.Context(),`select id,member_a,member_b from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid,&a,&b); err!=nil { errorJSON(w,409,"not_matched"); return }; column := "member_a_nickname"; if userID(r)==b { column="member_b_nickname" }; if _,err:=s.db.Exec(r.Context(),`update couples set `+column+`=$1 where id=$2`,nickname,cid);err!=nil{errorJSON(w,500,"database_error");return};writeJSON(w,200,map[string]string{"partner_nickname":nickname}) }
 func (s *server) addScore(w http.ResponseWriter, r *http.Request) {
-	var req scoreRequest; if !decodeJSON(w, r, &req) { return }; if req.Delta == 0 || len(req.IdempotencyKey) < 8 || len(req.IdempotencyKey) > 80 { errorJSON(w, 400, "invalid_score_request"); return }
+	var req scoreRequest; if !decodeJSON(w, r, &req) { return }; if req.Delta == 0 || len(req.IdempotencyKey) < 8 || len(req.IdempotencyKey) > 80 { errorJSON(w, 400, "invalid_score_request"); return }; if len([]rune(req.Note)) > 200 { errorJSON(w, 400, "note_too_long"); return }
 	uid := userID(r); var cid, target uuid.UUID; err := s.db.QueryRow(r.Context(), `select id,case when member_a=$1 then member_b else member_a end from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &target); if err != nil { errorJSON(w, 409, "not_matched"); return }
 	var existing eventJSON; var existingID uuid.UUID; var actor, targetName string; var note *string; var at time.Time; var d, sa int
 	err = s.db.QueryRow(r.Context(), `select e.id,au.display_name,tu.display_name,e.delta,e.score_after,e.note,e.created_at from score_events e join app_users au on au.id=e.actor_id join app_users tu on tu.id=e.target_user_id where e.actor_id=$1 and e.idempotency_key=$2`, uid, req.IdempotencyKey).Scan(&existingID, &actor, &targetName, &d, &sa, &note, &at); if err == nil { existing = eventJSON{existingID.String(), uid.String(), actor, targetName, d, sa, note, at}; writeJSON(w, 200, existing); return }
@@ -190,18 +198,54 @@ func (s *server) addScore(w http.ResponseWriter, r *http.Request) {
 	if _, err = tx.Exec(r.Context(), `insert into score_events(id,couple_id,actor_id,target_user_id,idempotency_key,delta,score_after,note) values($1,$2,$3,$4,$5,$6,$7,nullif(trim($8),''))`, eid, cid, uid, target, req.IdempotencyKey, req.Delta, next, req.Note); err != nil { errorJSON(w, 500, "database_error"); return }; if err = tx.Commit(r.Context()); err != nil { errorJSON(w, 500, "database_error"); return }
 	writeJSON(w, 200, eventJSON{eid.String(), uid.String(), s.displayName(r.Context(), uid), s.displayName(r.Context(), target), req.Delta, next, optional(req.Note), created})
 }
-func (s *server) updateSettings(w http.ResponseWriter, r *http.Request) {
-	var req settingsRequest; if !decodeJSON(w, r, &req) { return }; uid := userID(r); var cid uuid.UUID
+type ruleChangeRequestBody struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
+type pendingRulesJSON struct { ID string `json:"id"`; RequesterID string `json:"requester_id"`; Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"`; CreatedAt time.Time `json:"created_at"` }
+type ruleDecisionJSON struct { RequesterID string `json:"requester_id"`; Status string `json:"status"`; RespondedAt time.Time `json:"responded_at"` }
+
+func (s *server) createRulesRequest(w http.ResponseWriter, r *http.Request) {
+	var req ruleChangeRequestBody
+	if !decodeJSON(w, r, &req) { return }
+	addMin, addMax, subtractMin, subtractMax := req.AddMin, req.AddMax, req.SubtractMin, req.SubtractMax
+	if addMin == 0 { addMin = 1 }; if addMax == 0 { addMax = 5 }; if subtractMin == 0 { subtractMin = 1 }; if subtractMax == 0 { subtractMax = 5 }
+	if code := validateScoreRules(req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); code != "" { errorJSON(w, 400, code); return }
+	uid := userID(r); var cid uuid.UUID
 	if err := s.db.QueryRow(r.Context(), `select id from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid); err != nil { errorJSON(w, 409, "not_matched"); return }
+	var pendingID uuid.UUID
+	if err := s.db.QueryRow(r.Context(), `select id from rule_change_requests where couple_id=$1 and status='pending'`, cid).Scan(&pendingID); err == nil { errorJSON(w, 409, "request_pending"); return }
+	var bad bool; _ = s.db.QueryRow(r.Context(), `select exists(select 1 from couple_scores where couple_id=$1 and (($2::integer is not null and current_score<$2) or ($3::integer is not null and current_score>$3)))`, cid, req.Min, req.Max).Scan(&bad)
+	if bad { errorJSON(w, 400, "range_does_not_include_current_score"); return }
+	id := uuid.New()
+	if _, err := s.db.Exec(r.Context(), `insert into rule_change_requests(id,couple_id,requester_id,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, cid, uid, req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); err != nil { errorJSON(w, 500, "database_error"); return }
+	writeJSON(w, 200, map[string]any{"id": id.String(), "status": "pending"})
+}
+
+func (s *server) acceptRulesRequest(w http.ResponseWriter, r *http.Request) { s.respondRules(w, r, true) }
+func (s *server) rejectRulesRequest(w http.ResponseWriter, r *http.Request) { s.respondRules(w, r, false) }
+func (s *server) respondRules(w http.ResponseWriter, r *http.Request, accept bool) {
+	uid := userID(r); id, err := uuid.Parse(r.PathValue("id")); if err != nil { errorJSON(w, 400, "invalid_request"); return }
 	tx, err := s.db.Begin(r.Context()); if err != nil { errorJSON(w, 500, "database_error"); return }; defer tx.Rollback(r.Context())
-	if req.AddMin == 0 { req.AddMin = 1 }; if req.AddMax == 0 { req.AddMax = 5 }; if req.SubtractMin == 0 { req.SubtractMin = 1 }; if req.SubtractMax == 0 { req.SubtractMax = 5 }
-	if code := validateScoreRules(req.Initial, req.Min, req.Max, req.AddMin, req.AddMax, req.SubtractMin, req.SubtractMax); code != "" { errorJSON(w, 400, code); return }
-	var has bool; _ = tx.QueryRow(r.Context(), `select exists(select 1 from score_events where couple_id=$1)`, cid).Scan(&has)
-	if has { var bad bool; _ = tx.QueryRow(r.Context(), `select exists(select 1 from couple_scores where couple_id=$1 and (($2::integer is not null and current_score<$2) or ($3::integer is not null and current_score>$3)))`, cid, req.Min, req.Max).Scan(&bad); if bad { errorJSON(w, 400, "range_does_not_include_current_score"); return } }
-	if _, err = tx.Exec(r.Context(), `update score_settings set initial_score=$1,min_score=$2,max_score=$3,add_min=$4,add_max=$5,subtract_min=$6,subtract_max=$7,updated_at=now() where couple_id=$8`, req.Initial, req.Min, req.Max, req.AddMin, req.AddMax, req.SubtractMin, req.SubtractMax, cid); err != nil { errorJSON(w, 500, "database_error"); return }
-	if !has { if _, err = tx.Exec(r.Context(), `update couple_scores set current_score=$1,updated_at=now() where couple_id=$2`, req.Initial, cid); err != nil { errorJSON(w, 500, "database_error"); return } }
+	var cid, requester uuid.UUID; var status string; var initial int; var min, max *int; var addMin, addMax, subtractMin, subtractMax int
+	if err = tx.QueryRow(r.Context(), `select couple_id,requester_id,status,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max from rule_change_requests where id=$1 for update`, id).Scan(&cid, &requester, &status, &initial, &min, &max, &addMin, &addMax, &subtractMin, &subtractMax); err != nil { errorJSON(w, 404, "request_not_found"); return }
+	var member bool; _ = tx.QueryRow(r.Context(), `select exists(select 1 from couples where id=$1 and status='active' and (member_a=$2 or member_b=$2))`, cid, uid).Scan(&member)
+	if !member { errorJSON(w, 403, "forbidden"); return }
+	if status != "pending" { errorJSON(w, 409, "request_already_handled"); return }
+	if requester == uid { errorJSON(w, 403, "cannot_respond_own_request"); return }
+	if accept {
+		var has bool; _ = tx.QueryRow(r.Context(), `select exists(select 1 from score_events where couple_id=$1)`, cid).Scan(&has)
+		if has { var bad bool; _ = tx.QueryRow(r.Context(), `select exists(select 1 from couple_scores where couple_id=$1 and (($2::integer is not null and current_score<$2) or ($3::integer is not null and current_score>$3)))`, cid, min, max).Scan(&bad); if bad { errorJSON(w, 400, "range_does_not_include_current_score"); return } }
+		if _, err = tx.Exec(r.Context(), `update score_settings set initial_score=$1,min_score=$2,max_score=$3,add_min=$4,add_max=$5,subtract_min=$6,subtract_max=$7,updated_at=now() where couple_id=$8`, initial, min, max, addMin, addMax, subtractMin, subtractMax, cid); err != nil { errorJSON(w, 500, "database_error"); return }
+		if !has { if _, err = tx.Exec(r.Context(), `update couple_scores set current_score=$1,updated_at=now() where couple_id=$2`, initial, cid); err != nil { errorJSON(w, 500, "database_error"); return } }
+	}
+	newStatus := "rejected"; if accept { newStatus = "accepted" }
+	if _, err = tx.Exec(r.Context(), `update rule_change_requests set status=$1,responded_at=now() where id=$2`, newStatus, id); err != nil { errorJSON(w, 500, "database_error"); return }
 	if err = tx.Commit(r.Context()); err != nil { errorJSON(w, 500, "database_error"); return }
-	writeJSON(w, 200, map[string]any{"initial_score": req.Initial, "min_score": req.Min, "max_score": req.Max, "add_min": req.AddMin, "add_max": req.AddMax, "subtract_min": req.SubtractMin, "subtract_max": req.SubtractMax})
+	writeJSON(w, 200, map[string]string{"status": newStatus})
+}
+func (s *server) cancelRulesRequest(w http.ResponseWriter, r *http.Request) {
+	uid := userID(r); id, err := uuid.Parse(r.PathValue("id")); if err != nil { errorJSON(w, 400, "invalid_request"); return }
+	tag, err := s.db.Exec(r.Context(), `update rule_change_requests set status='cancelled',responded_at=now() where id=$1 and requester_id=$2 and status='pending'`, id, uid)
+	if err != nil { errorJSON(w, 500, "database_error"); return }; if tag.RowsAffected() == 0 { errorJSON(w, 409, "request_not_pending"); return }
+	writeJSON(w, 200, map[string]string{"status": "cancelled"})
 }
 func (s *server) displayName(ctx context.Context,id uuid.UUID)string{var name string;if s.db.QueryRow(ctx,`select display_name from app_users where id=$1`,id).Scan(&name)!=nil{return ""};return name};func other(uid,a,b uuid.UUID)uuid.UUID{if uid==a{return b};return a};func optional(v string)*string{v=strings.TrimSpace(v);if v==""{return nil};return &v};func sha256Bytes(v string)[]byte{h:=sha256.Sum256([]byte(v));return h[:]};func tokenHash(token string)[]byte{return sha256Bytes(token)};func newSessionToken()(string,[]byte,error){raw:=make([]byte,32);if _,err:=rand.Read(raw);err!=nil{return "",nil,err};token:=base64.RawURLEncoding.EncodeToString(raw);return token,tokenHash(token),nil}
 func validateScoreRules(initial int, min, max *int, addMin, addMax, subtractMin, subtractMax int) string { if min != nil && max != nil && *min > *max { return "invalid_score_range" }; if min != nil && initial < *min || max != nil && initial > *max { return "initial_score_outside_range" }; if addMin < 1 || addMax < addMin || addMax > 100 { return "invalid_add_range" }; if subtractMin < 1 || subtractMax < subtractMin || subtractMax > 100 { return "invalid_subtract_range" }; return "" }

@@ -185,13 +185,16 @@ class MainViewModel : ViewModel() {
     private fun processAvatar(context: Context, uri: Uri): ByteArray? = runCatching {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        // inJustDecodeBounds decoding returns null by design; only the stream matters here.
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        // Bounds-only decoding returns null by design, so the stream must be
+        // checked separately from the decode result.
+        val boundsStream = resolver.openInputStream(uri) ?: return null
+        boundsStream.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1024) sample *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
+        val dataStream = resolver.openInputStream(uri) ?: return null
+        val bitmap = dataStream.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
         val rotation = exifRotation(resolver, uri)
         val upright = if (rotation != 0f) {
             val matrix = android.graphics.Matrix().apply { postRotate(rotation) }

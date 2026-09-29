@@ -159,7 +159,10 @@ class MainViewModel : ViewModel() {
             try {
                 loadSnapshot()
             } catch (error: Exception) {
-                if (error is ApiException && error.statusCode == 401) repository.clearSession()
+                if (error is ApiException && error.statusCode == 401) {
+                    repository.clearSession()
+                    resetScoreKey()
+                }
                 _uiState.update { it.copy(loading = false, error = error.userMessage()) }
             }
         }
@@ -178,6 +181,7 @@ class MainViewModel : ViewModel() {
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
                     repository.clearSession()
+                    resetScoreKey()
                     _uiState.update { it.copy(authenticated = false, snapshot = null) }
                 }
                 if (notify) _uiState.update { it.copy(flash = "刷新失败", flashError = true) }
@@ -233,8 +237,14 @@ class MainViewModel : ViewModel() {
     fun signOut() {
         runBusy {
             repository.signOut()
+            resetScoreKey()
             _uiState.update { AppUiState(loading = false) }
         }
+    }
+
+    private fun resetScoreKey() {
+        scoreActionKey = null
+        scoreIdempotencyKey = null
     }
 
     fun createInvite() {
@@ -311,7 +321,7 @@ class MainViewModel : ViewModel() {
         }
         val key = scoreIdempotencyKey!!
         runBusy {
-            repository.addScore(delta, note, key)
+            repository.addScore(delta, note?.trim(), key)
             scoreIdempotencyKey = null
             scoreActionKey = null
             loadSnapshot()
@@ -389,6 +399,7 @@ class MainViewModel : ViewModel() {
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
                     repository.clearSession()
+                    resetScoreKey()
                     _uiState.update { it.copy(authenticated = false, snapshot = null) }
                 }
                 _uiState.update { it.copy(error = error.userMessage()) }

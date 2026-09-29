@@ -561,7 +561,8 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                         item { Notice(state, viewModel::clearNotice) }
                         if (visibleEvents.isEmpty()) {
                             item {
-                                if (snapshot.events.isEmpty()) EmptyEventsCard()
+                                val filtersActive = keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0
+                                if (snapshot.events.isEmpty() && !filtersActive) EmptyEventsCard()
                                 else PairingCard("这里暂时没有记录", "试试切换其他筛选，看看你们的日常。") {}
                             }
                         } else {

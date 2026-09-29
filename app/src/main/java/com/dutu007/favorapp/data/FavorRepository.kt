@@ -36,7 +36,8 @@ import java.util.UUID
 
 class FavorRepository(context: Context) {
     private val preferences = context.getSharedPreferences("favorapp_session", Context.MODE_PRIVATE)
-    private val client = HttpClient(Android) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
+    private val json = Json { ignoreUnknownKeys = true }
+    private val client = HttpClient(Android) { install(ContentNegotiation) { json(json) } }
     private val baseUrl = BuildConfig.API_BASE_URL.trimEnd('/')
 
     suspend fun signIn(username: String, password: String) { saveAuth(client.post("$baseUrl/api/v1/auth/login") { json(AuthRequest(username, password)) }.bodyChecked<AuthResponse>()) }
@@ -52,7 +53,7 @@ class FavorRepository(context: Context) {
     suspend fun acceptRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/accept") { auth() }.check() }
     suspend fun rejectRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/reject") { auth() }.check() }
     suspend fun cancelRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/cancel") { auth() }.check() }
-    suspend fun loadSnapshot(from: String? = null, to: String? = null, keyword: String? = null): CoupleSnapshot? { val response = client.get("$baseUrl/api/v1/couple") { auth(); url { from?.takeIf { it.isNotBlank() }?.let { parameters.append("from", it) }; to?.takeIf { it.isNotBlank() }?.let { parameters.append("to", it) }; keyword?.takeIf { it.isNotBlank() }?.let { parameters.append("keyword", it) } } }; response.check(); val raw = response.bodyAsText().trim(); if (raw == "null") return null; return Json.decodeFromString<CoupleDto>(raw).toSnapshot() }
+    suspend fun loadSnapshot(from: String? = null, to: String? = null, keyword: String? = null): CoupleSnapshot? { val response = client.get("$baseUrl/api/v1/couple") { auth(); url { from?.takeIf { it.isNotBlank() }?.let { parameters.append("from", it) }; to?.takeIf { it.isNotBlank() }?.let { parameters.append("to", it) }; keyword?.takeIf { it.isNotBlank() }?.let { parameters.append("keyword", it) } } }; response.check(); val raw = response.bodyAsText().trim(); if (raw == "null") return null; return json.decodeFromString<CoupleDto>(raw).toSnapshot() }
 
     private fun saveAuth(auth: AuthResponse) { preferences.edit().putString("token", auth.token).putString("user_id", auth.user.id).apply() }
     private fun HttpRequestBuilder.auth() { header("Authorization", "Bearer ${preferences.getString("token", "")}") }

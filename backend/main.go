@@ -127,6 +127,7 @@ func (s *server) issueSession(w http.ResponseWriter, r *http.Request, id uuid.UU
 	// Best-effort cleanup so expired sessions and invites do not accumulate; must not block login.
 	_,_ = s.db.Exec(r.Context(), `delete from sessions where expires_at < now()`)
 	_,_ = s.db.Exec(r.Context(), `delete from invites where expires_at < now()`)
+	_,_ = s.db.Exec(r.Context(), `delete from rule_change_requests where status <> 'pending' and responded_at < now() - interval '30 days'`)
 	_,err=s.db.Exec(r.Context(),`insert into sessions(id,user_id,token_hash,expires_at) values($1,$2,$3,$4)`,uuid.New(),id,hash,time.Now().Add(30*24*time.Hour)); if err!=nil { errorJSON(w,500,"session_failed"); return }; writeJSON(w,200,authResponse{Token:token,User:user}) }
 func (s *server) logout(w http.ResponseWriter, r *http.Request) { raw:=strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ")); h:=tokenHash(raw); _,_ = s.db.Exec(r.Context(),`delete from sessions where token_hash=$1`,h); w.WriteHeader(http.StatusNoContent) }
 func (s *server) me(w http.ResponseWriter, r *http.Request) { var u userJSON; err:=s.db.QueryRow(r.Context(),`select id,username,display_name from app_users where id=$1`,userID(r)).Scan(&u.ID,&u.Username,&u.DisplayName); if err!=nil { errorJSON(w,404,"user_not_found"); return }; writeJSON(w,200,u) }
@@ -215,7 +216,11 @@ func (s *server) createRulesRequest(w http.ResponseWriter, r *http.Request) {
 	var bad bool; _ = s.db.QueryRow(r.Context(), `select exists(select 1 from couple_scores where couple_id=$1 and (($2::integer is not null and current_score<$2) or ($3::integer is not null and current_score>$3)))`, cid, req.Min, req.Max).Scan(&bad)
 	if bad { errorJSON(w, 400, "range_does_not_include_current_score"); return }
 	id := uuid.New()
-	if _, err := s.db.Exec(r.Context(), `insert into rule_change_requests(id,couple_id,requester_id,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, cid, uid, req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); err != nil { errorJSON(w, 500, "database_error"); return }
+	if _, err := s.db.Exec(r.Context(), `insert into rule_change_requests(id,couple_id,requester_id,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, cid, uid, req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); err != nil {
+		// The partial unique index guards against two simultaneous requests.
+		if strings.Contains(err.Error(), "duplicate") { errorJSON(w, 409, "request_pending") } else { errorJSON(w, 500, "database_error") }
+		return
+	}
 	writeJSON(w, 200, map[string]any{"id": id.String(), "status": "pending"})
 }
 

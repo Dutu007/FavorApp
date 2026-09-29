@@ -716,7 +716,7 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
                 SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
             }
             item { SettingsRow("记分规则", "初始 ${state.snapshot?.settings?.initialScore ?: 0} 分") { page = "rules" } }
-            item { SettingsRow("添加记录预设", "${state.scorePresets.size} 项") { page = "presets" } }
+            item { SettingsRow("添加记录预设", "${state.scorePresets.size}/$PRESET_MAX_COUNT 项") { page = "presets" } }
             item {
                 Spacer(Modifier.height(10.dp))
                 Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) {

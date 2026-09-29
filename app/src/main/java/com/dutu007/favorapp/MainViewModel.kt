@@ -421,6 +421,7 @@ class MainViewModel : ViewModel() {
             raw.contains("request_not_found", ignoreCase = true) -> "修改请求不存在"
             raw.contains("cannot_respond_own_request", ignoreCase = true) -> "不能处理自己发起的请求"
             raw.contains("note_too_long", ignoreCase = true) -> "备注最多 200 个字"
+            raw.contains("ignoreUnknownKeys", ignoreCase = true) || raw.contains("unknown key", ignoreCase = true) -> "App 版本过旧，请更新到最新版本"
             raw.contains("invalid_credentials", ignoreCase = true) -> "账号或密码错误"
             raw.contains("username_taken", ignoreCase = true) -> "账号已被注册"
             raw.contains("initial_score_outside_range", ignoreCase = true) -> "初始分数不在上下限范围内"

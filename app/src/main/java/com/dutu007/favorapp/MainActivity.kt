@@ -95,6 +95,7 @@ private val PinkGradient = Brush.verticalGradient(
 
 // Server caps a query at 200 events; render them in pages of this size.
 private const val RECORDS_PAGE_SIZE = 50
+private const val RECORDS_SERVER_LIMIT = 200
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -550,7 +551,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                     FilterChipsRow(listOf("全部", "加分", "减分"), filter) { filter = it }
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        if (visibleEvents.size == 200) "最多显示最近 200 条记录，可用筛选缩小范围" else "共 ${visibleEvents.size} 条记录",
+                                        if (visibleEvents.size >= RECORDS_SERVER_LIMIT) "最多显示最近 $RECORDS_SERVER_LIMIT 条记录，可用筛选缩小范围" else "共 ${visibleEvents.size} 条记录",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.secondary,
                                     )
@@ -695,7 +696,7 @@ private fun partnerAwareName(snapshot: CoupleSnapshot, name: String): String =
 private fun PresetRow(preset: ScorePreset, onClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(14.dp), color = if (preset.delta > 0) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant) {
         Row(modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(preset.label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            Text(preset.label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), color = if (preset.delta > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
         }
     }

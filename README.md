@@ -14,6 +14,8 @@ https://api.zengdeming.cn
 - One-time invitation code matching
 - Mutual score balances and newest-first history
 - Optional minimum and maximum score limits
+- Score rule changes applied only after the partner approves
+- Partner nicknames and date/keyword searchable records
 - Transactional score updates with retry protection
 
 ## Android development

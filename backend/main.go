@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -86,6 +88,9 @@ func main() {
 	mux.Handle("POST /api/v1/score-settings/requests/{id}/cancel", s.auth(http.HandlerFunc(s.cancelRulesRequest)))
 	mux.Handle("GET /api/v1/score-events", s.auth(http.HandlerFunc(s.events)))
 	mux.Handle("PUT /api/v1/couple/nickname", s.auth(http.HandlerFunc(s.updateNickname)))
+	mux.Handle("PUT /api/v1/me/avatar", s.auth(http.HandlerFunc(s.updateAvatar)))
+	mux.Handle("DELETE /api/v1/me/avatar", s.auth(http.HandlerFunc(s.deleteAvatar)))
+	mux.Handle("GET /api/v1/users/{id}/avatar", s.auth(http.HandlerFunc(s.avatar)))
 
 	addr := os.Getenv("LISTEN_ADDR"); if addr == "" { addr = ":8080" }
 	log.Printf("FavorApp API listening on %s", addr)
@@ -167,11 +172,11 @@ func (s *server) couple(w http.ResponseWriter, r *http.Request) {
 	var settings struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 	err = s.db.QueryRow(r.Context(), `select initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max from score_settings where couple_id=$1`, cid).Scan(&settings.Initial, &settings.Min, &settings.Max, &settings.AddMin, &settings.AddMax, &settings.SubtractMin, &settings.SubtractMax)
 	if err != nil { errorJSON(w, 500, "database_error"); return }
-	rows, err := s.db.Query(r.Context(), `select cs.target_user_id,u.username,u.display_name,cs.current_score from couple_scores cs join app_users u on u.id=cs.target_user_id where cs.couple_id=$1`, cid); if err != nil { errorJSON(w, 500, "database_error"); return }; defer rows.Close()
-	type card struct { UserID string `json:"user_id"`; Name string `json:"name"`; Score int `json:"score"` }; cards := []card{}
+	rows, err := s.db.Query(r.Context(), `select cs.target_user_id,u.username,u.display_name,cs.current_score,coalesce(extract(epoch from u.avatar_updated_at),0)::bigint from couple_scores cs join app_users u on u.id=cs.target_user_id where cs.couple_id=$1`, cid); if err != nil { errorJSON(w, 500, "database_error"); return }; defer rows.Close()
+	type card struct { UserID string `json:"user_id"`; Name string `json:"name"`; Score int `json:"score"`; AvatarVersion int64 `json:"avatar_version"` }; cards := []card{}
 	nickname := nicknameA; if uid == b { nickname = nicknameB }
 	currentName, partnerName := "", ""; partner := other(uid, a, b)
-	for rows.Next() { var id uuid.UUID; var username, name string; var score int; if err = rows.Scan(&id, &username, &name, &score); err != nil { errorJSON(w, 500, "database_error"); return }; if name == "" { name = username }; if id == uid { currentName = name } else if id == partner { partnerName = name }; cards = append(cards, card{id.String(), name, score}) }
+	for rows.Next() { var id uuid.UUID; var username, name string; var score int; var avatarVersion int64; if err = rows.Scan(&id, &username, &name, &score, &avatarVersion); err != nil { errorJSON(w, 500, "database_error"); return }; if name == "" { name = username }; if id == uid { currentName = name } else if id == partner { partnerName = name }; cards = append(cards, card{id.String(), name, score, avatarVersion}) }
 	events := s.loadEvents(r.Context(), cid, r.URL.Query().Get("from"), r.URL.Query().Get("to"), r.URL.Query().Get("keyword"))
 	var pending *pendingRulesJSON
 	var pendingRow pendingRulesJSON
@@ -185,6 +190,32 @@ type eventJSON struct{ID string `json:"id"`;ActorID string `json:"actor_id"`;Act
 func (s *server) loadEvents(ctx context.Context,cid uuid.UUID, from, to, keyword string)[]eventJSON{from = strings.TrimSpace(from); to = strings.TrimSpace(to); keyword = strings.TrimSpace(keyword); if len([]rune(keyword)) > 80 { keyword = string([]rune(keyword)[:80]) }; args := []any{cid}; where := `e.couple_id=$1`; if from != "" { args = append(args, from); where += fmt.Sprintf(" and e.created_at >= ($%d::date::timestamp at time zone 'Asia/Shanghai')", len(args)) }; if to != "" { args = append(args, to); where += fmt.Sprintf(" and e.created_at < (($%d::date + interval '1 day')::timestamp at time zone 'Asia/Shanghai')", len(args)) }; if keyword != "" { args = append(args, "%"+keyword+"%"); where += fmt.Sprintf(" and e.note ilike $%d", len(args)) }; query := `select e.id,e.actor_id,au.display_name,tu.display_name,e.delta,e.score_after,e.note,e.created_at from score_events e join app_users au on au.id=e.actor_id join app_users tu on tu.id=e.target_user_id where `+where+` order by e.created_at desc limit 200`; rows,err:=s.db.Query(ctx,query,args...);if err!=nil{return []eventJSON{}};defer rows.Close();out:=[]eventJSON{};for rows.Next(){var id,actor uuid.UUID;var a,t string;var d,sa int;var note *string;var at time.Time;if rows.Scan(&id,&actor,&a,&t,&d,&sa,&note,&at)==nil{out=append(out,eventJSON{id.String(),actor.String(),a,t,d,sa,note,at})}};return out}
 func (s *server) events(w http.ResponseWriter,r *http.Request){var cid uuid.UUID;err:=s.db.QueryRow(r.Context(),`select id from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid);if err!=nil{writeJSON(w,200,[]eventJSON{});return};writeJSON(w,200,s.loadEvents(r.Context(),cid,r.URL.Query().Get("from"),r.URL.Query().Get("to"),r.URL.Query().Get("keyword")))}
 func (s *server) updateNickname(w http.ResponseWriter, r *http.Request) { var req nicknameRequest; if !decodeJSON(w,r,&req) { return }; nickname := strings.TrimSpace(req.Nickname); if len([]rune(nickname)) > 8 { errorJSON(w,400,"nickname_too_long"); return }; var cid,a,b uuid.UUID; if err:=s.db.QueryRow(r.Context(),`select id,member_a,member_b from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid,&a,&b); err!=nil { errorJSON(w,409,"not_matched"); return }; column := "member_a_nickname"; if userID(r)==b { column="member_b_nickname" }; if _,err:=s.db.Exec(r.Context(),`update couples set `+column+`=$1 where id=$2`,nickname,cid);err!=nil{errorJSON(w,500,"database_error");return};writeJSON(w,200,map[string]string{"partner_nickname":nickname}) }
+
+func (s *server) updateAvatar(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512<<10))
+	if err != nil { errorJSON(w, 400, "avatar_too_large"); return }
+	if imageContentType(body) == "" { errorJSON(w, 400, "invalid_image"); return }
+	if _, err = s.db.Exec(r.Context(), `update app_users set avatar=$1, avatar_updated_at=now() where id=$2`, body, userID(r)); err != nil { errorJSON(w, 500, "database_error"); return }
+	writeJSON(w, 200, map[string]any{"updated": true})
+}
+func (s *server) deleteAvatar(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.db.Exec(r.Context(), `update app_users set avatar=null, avatar_updated_at=now() where id=$1`, userID(r)); err != nil { errorJSON(w, 500, "database_error"); return }
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *server) avatar(w http.ResponseWriter, r *http.Request) {
+	uid := userID(r)
+	target, err := uuid.Parse(r.PathValue("id")); if err != nil { errorJSON(w, 400, "invalid_request"); return }
+	// Avatars are private: only the owner and their partner may fetch them.
+	if target != uid { var a, b uuid.UUID; if e := s.db.QueryRow(r.Context(), `select member_a,member_b from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&a, &b); e != nil || (target != a && target != b) { errorJSON(w, 403, "forbidden"); return } }
+	var img []byte; var updated *time.Time
+	if err = s.db.QueryRow(r.Context(), `select avatar,avatar_updated_at from app_users where id=$1`, target).Scan(&img, &updated); err != nil || img == nil { errorJSON(w, 404, "avatar_not_found"); return }
+	contentType := imageContentType(img); if contentType == "" { errorJSON(w, 404, "avatar_not_found"); return }
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("ETag", fmt.Sprintf(`"av-%d"`, updated.Unix()))
+	http.ServeContent(w, r, "", *updated, bytes.NewReader(img))
+}
+func imageContentType(b []byte) string { switch { case len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF: return "image/jpeg"; case len(b) >= 8 && b[0] == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G': return "image/png"; case len(b) >= 12 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WEBP": return "image/webp" }; return "" }
 func (s *server) addScore(w http.ResponseWriter, r *http.Request) {
 	var req scoreRequest; if !decodeJSON(w, r, &req) { return }; if req.Delta == 0 || len(req.IdempotencyKey) < 8 || len(req.IdempotencyKey) > 80 { errorJSON(w, 400, "invalid_score_request"); return }; if len([]rune(req.Note)) > 200 { errorJSON(w, 400, "note_too_long"); return }
 	uid := userID(r); var cid, target uuid.UUID; err := s.db.QueryRow(r.Context(), `select id,case when member_a=$1 then member_b else member_a end from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &target); if err != nil { errorJSON(w, 409, "not_matched"); return }

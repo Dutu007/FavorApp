@@ -1,5 +1,9 @@
 package com.dutu007.favorapp
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dutu007.favorapp.data.CoupleSnapshot
@@ -8,13 +12,16 @@ import com.dutu007.favorapp.data.FavorRepository
 import com.dutu007.favorapp.data.ScoreRule
 import com.dutu007.favorapp.data.ScoreSettingRow
 import com.dutu007.favorapp.data.ScorePreset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 enum class AuthMode { SIGN_IN, SIGN_UP }
@@ -148,6 +155,50 @@ class MainViewModel : ViewModel() {
         runBusy { repository.updateNickname(value); _uiState.update { it.copy(message = "恋人昵称已保存") }; loadSnapshot() }
         return true
     }
+
+    fun avatarUrlFor(userId: String, version: Long): String? = repository.avatarUrl(userId, version)
+    val authToken: String get() = repository.authToken()
+
+    fun uploadAvatarFromUri(context: Context, uri: Uri) {
+        runBusy {
+            val bytes = withContext(Dispatchers.IO) { processAvatar(context, uri) }
+            if (bytes == null) {
+                _uiState.update { it.copy(error = "无法读取所选图片，换一张试试") }
+                return@runBusy
+            }
+            repository.uploadAvatar(bytes)
+            _uiState.update { it.copy(message = "头像已更新") }
+            loadSnapshot()
+        }
+    }
+
+    fun deleteAvatar() {
+        runBusy {
+            repository.deleteAvatar()
+            _uiState.update { it.copy(message = "头像已移除") }
+            loadSnapshot()
+        }
+    }
+
+    // Center-crop to a square, downsample to 256px and re-encode as JPEG,
+    // which also strips EXIF (location etc.) before upload.
+    private fun processAvatar(context: Context, uri: Uri): ByteArray? = runCatching {
+        val resolver = context.contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 512) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
+        val side = minOf(bitmap.width, bitmap.height)
+        val left = (bitmap.width - side) / 2
+        val top = (bitmap.height - side) / 2
+        val square = Bitmap.createBitmap(bitmap, left, top, side, side)
+        val output = ByteArrayOutputStream()
+        Bitmap.createScaledBitmap(square, 256, 256, true).compress(Bitmap.CompressFormat.JPEG, 85, output)
+        output.toByteArray()
+    }.getOrNull()
 
     fun refreshSession() {
         viewModelScope.launch {

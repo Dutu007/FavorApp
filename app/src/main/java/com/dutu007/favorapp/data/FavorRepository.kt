@@ -25,7 +25,7 @@ import kotlinx.serialization.json.Json
 @Serializable private data class AuthResponse(val token: String, val user: UserDto)
 @Serializable private data class UserDto(val id: String, val username: String, @SerialName("display_name") val displayName: String)
 @Serializable private data class InviteResponse(val code: String)
-@Serializable private data class ScoreCardDto(@SerialName("user_id") val userId: String, val name: String, val score: Int)
+@Serializable private data class ScoreCardDto(@SerialName("user_id") val userId: String, val name: String, val score: Int, @SerialName("avatar_version") val avatarVersion: Long = 0)
 @Serializable private data class EventDto(val id: String, @SerialName("actor_id") val actorId: String = "", @SerialName("actor_name") val actorName: String, @SerialName("target_name") val targetName: String, val delta: Int, @SerialName("score_after") val scoreAfter: Int, val note: String? = null, @SerialName("created_at") val createdAt: String)
 @Serializable private data class SettingsDto(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class PendingRulesDto(val id: String, @SerialName("requester_id") val requesterId: String, @SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
@@ -48,6 +48,10 @@ class FavorRepository(context: Context) {
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
     suspend fun addScore(delta: Int, note: String?, idempotencyKey: String) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, idempotencyKey)) }.bodyChecked<EventDto>() }
     suspend fun updateNickname(nickname: String) { client.put("$baseUrl/api/v1/couple/nickname") { auth(); json(NicknameRequest(nickname)) }.check() }
+    suspend fun uploadAvatar(bytes: ByteArray) { client.put("$baseUrl/api/v1/me/avatar") { auth(); contentType(ContentType("image", "jpeg")); setBody(bytes) }.check() }
+    suspend fun deleteAvatar() { client.delete("$baseUrl/api/v1/me/avatar") { auth() }.check() }
+    fun avatarUrl(userId: String, version: Long): String? = if (version > 0) "$baseUrl/api/v1/users/$userId/avatar?v=$version" else null
+    fun authToken(): String = preferences.getString("token", "").orEmpty()
     suspend fun createRulesRequest(addMin: Int, addMax: Int, subtractMin: Int, subtractMax: Int) { client.post("$baseUrl/api/v1/score-settings/requests") { auth(); json(RulesChangeRequest(addMin, addMax, subtractMin, subtractMax)) }.check() }
     suspend fun acceptRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/accept") { auth() }.check() }
     suspend fun rejectRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/reject") { auth() }.check() }
@@ -59,7 +63,7 @@ class FavorRepository(context: Context) {
     private fun HttpRequestBuilder.json(value: Any) { contentType(ContentType.Application.Json); setBody(value) }
     private suspend inline fun <reified T> HttpResponse.bodyChecked(): T { check(); return body() }
     private suspend fun HttpResponse.check() { if (status.value !in 200..299) { val error = runCatching { body<ErrorDto>() }.getOrNull()?.error; throw ApiException(status.value, error ?: "request_failed") } }
-    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, partnerNickname, cards.map { ScoreCard(it.userId, it.name, it.score) }, events.map { ScoreEventItem(it.id, it.actorId, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax), pendingRules?.let { PendingRuleRequest(it.id, it.requesterId, it.initial, it.min, it.max, it.addMin, it.addMax, it.subtractMin, it.subtractMax) }, latestRuleDecision?.let { RuleDecision(it.requesterId, it.status, it.respondedAt) })
+    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, partnerNickname, cards.map { ScoreCard(it.userId, it.name, it.score, it.avatarVersion) }, events.map { ScoreEventItem(it.id, it.actorId, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax), pendingRules?.let { PendingRuleRequest(it.id, it.requesterId, it.initial, it.min, it.max, it.addMin, it.addMax, it.subtractMin, it.subtractMax) }, latestRuleDecision?.let { RuleDecision(it.requesterId, it.status, it.respondedAt) })
 }
 
 class ApiException(val statusCode: Int, val code: String) : Exception(code)

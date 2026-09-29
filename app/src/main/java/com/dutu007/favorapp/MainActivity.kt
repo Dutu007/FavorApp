@@ -2,8 +2,15 @@ package com.dutu007.favorapp
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
@@ -470,7 +477,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                 ) {
                     item { Notice(state, viewModel::clearNotice) }
                     if (!records) {
-                        item { CoupleHeroCard(snapshot) }
+                        item { CoupleHeroCard(snapshot, viewModel) }
                         item {
                             PairingCard("记录一次", null) {
                                 AppTextField(note, { note = it }, "备注（可选）", "✎")
@@ -611,7 +618,9 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
 }
 
 @Composable
-private fun CoupleHeroCard(snapshot: CoupleSnapshot) {
+private fun CoupleHeroCard(snapshot: CoupleSnapshot, viewModel: MainViewModel) {
+    val myCard = snapshot.cards.firstOrNull { it.userId == snapshot.currentUserId }
+    val partnerCard = snapshot.cards.firstOrNull { it.userId != snapshot.currentUserId }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -622,14 +631,14 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot) {
             Spacer(Modifier.height(20.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    AvatarBubble(snapshot.currentUserName)
+                    AvatarBubble(snapshot.currentUserName, myCard?.let { viewModel.avatarUrlFor(it.userId, it.avatarVersion) }, viewModel.authToken)
                     Spacer(Modifier.height(8.dp))
                     Text(snapshot.currentUserName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                     Text("我", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                 }
                 Text("♥", fontSize = 28.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 16.dp))
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    AvatarBubble(snapshot.partnerName)
+                    AvatarBubble(snapshot.partnerNickname.ifBlank { snapshot.partnerName }, partnerCard?.let { viewModel.avatarUrlFor(it.userId, it.avatarVersion) }, viewModel.authToken)
                     Spacer(Modifier.height(8.dp))
                     Text(snapshot.partnerNickname.ifBlank { snapshot.partnerName }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                     Text("恋人", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
@@ -645,10 +654,23 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot) {
     }
 }
 @Composable
-private fun AvatarBubble(name: String) {
+private fun AvatarBubble(name: String, avatarUrl: String? = null, token: String = "") {
     val initial = name.trim().firstOrNull()?.toString() ?: "♡"
     Box(modifier = Modifier.size(76.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).border(4.dp, Color.White, CircleShape), contentAlignment = Alignment.Center) {
+        // Letter stays composed underneath: if the image fails to load it shows through.
         Text(initial, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        if (avatarUrl != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(avatarUrl)
+                    .addHeader("Authorization", "Bearer $token")
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
     }
 }
 
@@ -708,12 +730,14 @@ private fun PresetRow(preset: ScorePreset, onClick: () -> Unit) {
 private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismiss: () -> Unit) {
     var page by rememberSaveable { mutableStateOf("list") }
     BackHandler { if (page != "list") page = "list" else onDismiss() }
+    if (page == "avatar") { AvatarSettings(state, viewModel) { page = "list" }; return }
     if (page == "nickname") { NicknameSettings(state, viewModel) { page = "list" }; return }
     if (page == "rules") { RulesSettings(state, viewModel) { page = "list" }; return }
     if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
     SettingsPageScaffold("设置", onDismiss) { padding ->
         LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item { Notice(state, viewModel::clearNotice) }
+            item { SettingsRow("我的头像", "更换或移除") { page = "avatar" } }
             item {
                 SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
             }
@@ -768,6 +792,27 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
             },
         ) { padding ->
             Box(Modifier.fillMaxSize()) { content(padding) }
+        }
+    }
+}
+
+@Composable private fun AvatarSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val myCard = state.snapshot?.cards?.firstOrNull { it.userId == state.snapshot?.currentUserId }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) viewModel.uploadAvatarFromUri(context, uri)
+    }
+    SettingsPageScaffold("我的头像", onBack) { padding ->
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (myCard != null) {
+                AvatarBubble(state.snapshot.currentUserName, viewModel.avatarUrlFor(myCard.userId, myCard.avatarVersion), viewModel.authToken)
+            }
+            Notice(state, viewModel::clearNotice)
+            Button(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("更换头像") }
+            if ((myCard?.avatarVersion ?: 0) > 0) {
+                OutlinedButton(onClick = viewModel::deleteAvatar, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("移除头像") }
+            }
+            Text("头像只有你们两人可见；会自动裁成方形并压缩后上传。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

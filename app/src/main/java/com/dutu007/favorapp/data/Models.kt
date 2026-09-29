@@ -1,6 +1,6 @@
 package com.dutu007.favorapp.data
 
-data class ScoreCard(val userId: String, val name: String, val score: Int)
+data class ScoreCard(val userId: String, val name: String, val score: Int, val avatarVersion: Long = 0)
 data class ScoreEventItem(val id: String, val actorId: String = "", val actorName: String, val targetName: String, val delta: Int, val scoreAfter: Int, val note: String?, val createdAt: String)
 data class ScoreRule(val initialScore: Int = 0, val minScore: Int? = null, val maxScore: Int? = null, val addMin: Int = 1, val addMax: Int = 5, val subtractMin: Int = 1, val subtractMax: Int = 5)
 data class ScoreSettingRow(val coupleId: String, val initialScore: Int, val minScore: Int? = null, val maxScore: Int? = null, val addMin: Int = 1, val addMax: Int = 5, val subtractMin: Int = 1, val subtractMax: Int = 5)

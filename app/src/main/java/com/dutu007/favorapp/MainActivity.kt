@@ -81,6 +81,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -654,9 +655,9 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot, viewModel: MainViewModel) {
     }
 }
 @Composable
-private fun AvatarBubble(name: String, avatarUrl: String? = null, token: String = "") {
+private fun AvatarBubble(name: String, avatarUrl: String? = null, token: String = "", size: Dp = 76.dp) {
     val initial = name.trim().firstOrNull()?.toString() ?: "♡"
-    Box(modifier = Modifier.size(76.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).border(4.dp, Color.White, CircleShape), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
         // Letter stays composed underneath: if the image fails to load it shows through.
         Text(initial, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         if (avatarUrl != null) {
@@ -671,6 +672,8 @@ private fun AvatarBubble(name: String, avatarUrl: String? = null, token: String 
                 contentScale = ContentScale.Crop,
             )
         }
+        // Overlay ring: drawn after the children so a full-bleed image cannot cover it.
+        Box(modifier = Modifier.fillMaxSize().border(4.dp, Color.White, CircleShape))
     }
 }
 
@@ -805,7 +808,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
     SettingsPageScaffold("我的头像", onBack) { padding ->
         Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (myCard != null) {
-                AvatarBubble(state.snapshot.currentUserName, viewModel.avatarUrlFor(myCard.userId, myCard.avatarVersion), viewModel.authToken)
+                AvatarBubble(state.snapshot.currentUserName, viewModel.avatarUrlFor(myCard.userId, myCard.avatarVersion), viewModel.authToken, size = 120.dp)
             }
             Notice(state, viewModel::clearNotice)
             Button(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("更换头像") }

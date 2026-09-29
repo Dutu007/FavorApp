@@ -428,10 +428,16 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     }
     val shownEvents = visibleEvents.take(visibleLimit)
     LaunchedEffect(records, keyword, date) {
-        if (records) {
-            kotlinx.coroutines.delay(500)
-            viewModel.refreshSnapshot(keyword = keyword, date = date)
+        if (!records) {
+            // Returning home: drop the records-tab filters so the recent-records card is complete.
+            if (keyword.isNotBlank() || date.isNotBlank()) {
+                kotlinx.coroutines.delay(400)
+                viewModel.refreshSnapshot()
+            }
+            return@LaunchedEffect
         }
+        kotlinx.coroutines.delay(500)
+        viewModel.refreshSnapshot(keyword = keyword, date = date)
     }
     LaunchedEffect(records, keyword, date, filter, direction) { visibleLimit = RECORDS_PAGE_SIZE }
     AppBackground {
@@ -705,6 +711,7 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
     SettingsPageScaffold("设置", onDismiss) { padding ->
         LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item { Notice(state, viewModel::clearNotice) }
             item {
                 SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
             }
@@ -765,7 +772,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
             Text("这是你对 TA 的专属称呼，只对你自己可见。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡")
             Notice(state, viewModel::clearNotice)
-            PrimaryAction("保存", state.busy) { viewModel.savePartnerNickname(nickname); onBack() }
+            PrimaryAction("保存", state.busy) { if (viewModel.savePartnerNickname(nickname)) onBack() }
             Text("留空保存即清除昵称，界面会恢复显示对方的名字。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -779,7 +786,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
             if (pending != null) {
                 PendingRulesCard(state, pending, viewModel)
             } else {
-                RulesForm(state, viewModel, onBack)
+                RulesForm(state, viewModel)
             }
         }
     }
@@ -808,7 +815,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
     }
 }
 
-@Composable private fun RulesForm(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+@Composable private fun RulesForm(state: AppUiState, viewModel: MainViewModel) {
     val settings = state.snapshot?.settings
     var initial by rememberSaveable { mutableStateOf((settings?.initialScore ?: 0).toString()) }
     var min by rememberSaveable { mutableStateOf(settings?.minScore?.toString().orEmpty()) }
@@ -834,7 +841,6 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
         }
         PrimaryAction("请求修改", state.busy) {
             viewModel.requestRulesChange(initial, min, max, addMin, addMax, subtractMin, subtractMax)
-            onBack()
         }
     }
 }
@@ -842,7 +848,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 @Composable private fun PresetSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     SettingsPageScaffold("添加记录预设", onBack) { padding ->
         LazyColumn(Modifier.padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
-            item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "备注，例如：给你做了一顿饭", "♡") }
+            item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "备注，例如：乖乖早睡", "♡") }
             item { Text("备注最多 $NOTE_MAX_LENGTH 个字，常用记录最多保存 $PRESET_MAX_COUNT 条（当前 ${state.scorePresets.size}/$PRESET_MAX_COUNT）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset) { Text("添加") } } }
             item { Notice(state, viewModel::clearNotice) }

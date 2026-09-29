@@ -208,7 +208,7 @@ func (s *server) avatar(w http.ResponseWriter, r *http.Request) {
 	// Avatars are private: only the owner and their partner may fetch them.
 	if target != uid { var a, b uuid.UUID; if e := s.db.QueryRow(r.Context(), `select member_a,member_b from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&a, &b); e != nil || (target != a && target != b) { errorJSON(w, 403, "forbidden"); return } }
 	var img []byte; var updated *time.Time
-	if err = s.db.QueryRow(r.Context(), `select avatar,avatar_updated_at from app_users where id=$1`, target).Scan(&img, &updated); err != nil || img == nil { errorJSON(w, 404, "avatar_not_found"); return }
+	if err = s.db.QueryRow(r.Context(), `select avatar,avatar_updated_at from app_users where id=$1`, target).Scan(&img, &updated); err != nil || img == nil || updated == nil { errorJSON(w, 404, "avatar_not_found"); return }
 	contentType := imageContentType(img); if contentType == "" { errorJSON(w, 404, "avatar_not_found"); return }
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "private, max-age=86400")

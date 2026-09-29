@@ -185,20 +185,43 @@ class MainViewModel : ViewModel() {
     private fun processAvatar(context: Context, uri: Uri): ByteArray? = runCatching {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        // inJustDecodeBounds decoding returns null by design; only the stream matters here.
         resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 512) sample *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
         val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
-        val side = minOf(bitmap.width, bitmap.height)
-        val left = (bitmap.width - side) / 2
-        val top = (bitmap.height - side) / 2
-        val square = Bitmap.createBitmap(bitmap, left, top, side, side)
+        val rotation = exifRotation(resolver, uri)
+        val upright = if (rotation != 0f) {
+            val matrix = android.graphics.Matrix().apply { postRotate(rotation) }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } else bitmap
+        val side = minOf(upright.width, upright.height)
+        val left = (upright.width - side) / 2
+        val top = (upright.height - side) / 2
+        val square = Bitmap.createBitmap(upright, left, top, side, side)
         val output = ByteArrayOutputStream()
         Bitmap.createScaledBitmap(square, 256, 256, true).compress(Bitmap.CompressFormat.JPEG, 85, output)
         output.toByteArray()
     }.getOrNull()
+
+    private fun exifRotation(resolver: android.content.ContentResolver, uri: Uri): Float {
+        val orientation = runCatching {
+            resolver.openInputStream(uri)?.use { stream ->
+                androidx.exifinterface.media.ExifInterface(stream).getAttributeInt(
+                    androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
+                    androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL,
+                )
+            }
+        }.getOrNull() ?: androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
+        return when (orientation) {
+            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+    }
 
     fun refreshSession() {
         viewModelScope.launch {

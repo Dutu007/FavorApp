@@ -189,7 +189,7 @@ class MainViewModel : ViewModel() {
         resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 512) sample *= 2
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1024) sample *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
         val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
         val rotation = exifRotation(resolver, uri)
@@ -202,7 +202,7 @@ class MainViewModel : ViewModel() {
         val top = (upright.height - side) / 2
         val square = Bitmap.createBitmap(upright, left, top, side, side)
         val output = ByteArrayOutputStream()
-        Bitmap.createScaledBitmap(square, 256, 256, true).compress(Bitmap.CompressFormat.JPEG, 85, output)
+        Bitmap.createScaledBitmap(square, 512, 512, true).compress(Bitmap.CompressFormat.JPEG, 85, output)
         output.toByteArray()
     }.getOrNull()
 

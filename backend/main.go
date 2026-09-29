@@ -192,7 +192,7 @@ func (s *server) events(w http.ResponseWriter,r *http.Request){var cid uuid.UUID
 func (s *server) updateNickname(w http.ResponseWriter, r *http.Request) { var req nicknameRequest; if !decodeJSON(w,r,&req) { return }; nickname := strings.TrimSpace(req.Nickname); if len([]rune(nickname)) > 8 { errorJSON(w,400,"nickname_too_long"); return }; var cid,a,b uuid.UUID; if err:=s.db.QueryRow(r.Context(),`select id,member_a,member_b from couples where status='active' and (member_a=$1 or member_b=$1)`,userID(r)).Scan(&cid,&a,&b); err!=nil { errorJSON(w,409,"not_matched"); return }; column := "member_a_nickname"; if userID(r)==b { column="member_b_nickname" }; if _,err:=s.db.Exec(r.Context(),`update couples set `+column+`=$1 where id=$2`,nickname,cid);err!=nil{errorJSON(w,500,"database_error");return};writeJSON(w,200,map[string]string{"partner_nickname":nickname}) }
 
 func (s *server) updateAvatar(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512<<10))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 	if err != nil { errorJSON(w, 400, "avatar_too_large"); return }
 	if imageContentType(body) == "" { errorJSON(w, 400, "invalid_image"); return }
 	if _, err = s.db.Exec(r.Context(), `update app_users set avatar=$1, avatar_updated_at=now() where id=$2`, body, userID(r)); err != nil { errorJSON(w, 500, "database_error"); return }

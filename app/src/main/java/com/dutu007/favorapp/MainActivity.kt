@@ -718,7 +718,9 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
                 SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
             }
             item {
-                val rulesSubtitle = if (state.snapshot?.pendingRules != null) "有待处理的修改请求" else "初始 ${state.snapshot?.settings?.initialScore ?: 0} 分"
+                val settings = state.snapshot?.settings
+                val rulesSubtitle = if (state.snapshot?.pendingRules != null) "有待处理的修改请求"
+                else settings?.let { "单次加分 ${it.addMin}~${it.addMax} · 单次扣分 ${it.subtractMin}~${it.subtractMax}" } ?: "未匹配"
                 SettingsRow("记分规则", rulesSubtitle) { page = "rules" }
             }
             item { SettingsRow("添加记录预设", "${state.scorePresets.size}/$PRESET_MAX_COUNT 项") { page = "presets" } }
@@ -805,7 +807,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(if (mine) "等待对方同意" else "对方发来修改请求", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             Text(
-                "初始分数 ${pending.initialScore} · 总分下限 ${pending.minScore ?: "无"} · 总分上限 ${pending.maxScore ?: "无"}\n单次加分 ${pending.addMin}-${pending.addMax} · 单次扣分 ${pending.subtractMin}-${pending.subtractMax}",
+                "单次加分 ${pending.addMin}~${pending.addMax} · 单次扣分 ${pending.subtractMin}~${pending.subtractMax}",
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (mine) {
@@ -824,30 +826,24 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 
 @Composable private fun RulesForm(state: AppUiState, viewModel: MainViewModel) {
     val settings = state.snapshot?.settings
-    var initial by rememberSaveable { mutableStateOf((settings?.initialScore ?: 0).toString()) }
-    var min by rememberSaveable { mutableStateOf(settings?.minScore?.toString().orEmpty()) }
-    var max by rememberSaveable { mutableStateOf(settings?.maxScore?.toString().orEmpty()) }
     var addMin by rememberSaveable { mutableStateOf((settings?.addMin ?: 1).toString()) }
     var addMax by rememberSaveable { mutableStateOf((settings?.addMax ?: 5).toString()) }
     var subtractMin by rememberSaveable { mutableStateOf((settings?.subtractMin ?: 1).toString()) }
     var subtractMax by rememberSaveable { mutableStateOf((settings?.subtractMax ?: 5).toString()) }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("修改需要对方同意后才会生效，双方共用一套规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        NumberField("初始分数", initial, onValueChange = { initial = it })
-        NumberField("总分下限（可选）", min, onValueChange = { min = it })
-        NumberField("总分上限（可选）", max, onValueChange = { max = it })
-        Text("单次加分范围（绝对值 1-100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("单次加分范围（正数1~100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             NumberField("最小", addMin, onValueChange = { addMin = it }, Modifier.weight(1f))
             NumberField("最大", addMax, onValueChange = { addMax = it }, Modifier.weight(1f))
         }
-        Text("单次扣分范围（绝对值 1-100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("单次扣分范围（正数1~100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             NumberField("最小", subtractMin, onValueChange = { subtractMin = it }, Modifier.weight(1f))
             NumberField("最大", subtractMax, onValueChange = { subtractMax = it }, Modifier.weight(1f))
         }
         PrimaryAction("请求修改", state.busy) {
-            viewModel.requestRulesChange(initial, min, max, addMin, addMax, subtractMin, subtractMax)
+            viewModel.requestRulesChange(addMin, addMax, subtractMin, subtractMax)
         }
     }
 }
@@ -857,7 +853,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
         LazyColumn(Modifier.fillMaxSize().imePadding().padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
             item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "备注，例如：乖乖早睡", "♡") }
             item { Text("备注最多 $NOTE_MAX_LENGTH 个字，常用记录最多保存 $PRESET_MAX_COUNT 条（当前 ${state.scorePresets.size}/$PRESET_MAX_COUNT）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset) { Text("添加") } } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("添加") } } }
             item { Notice(state, viewModel::clearNotice) }
             items(state.scorePresets, key = { it.id }) { preset -> Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Text(preset.label, Modifier.weight(1f)); Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), fontWeight = FontWeight.Bold); TextButton(onClick = { viewModel.removePreset(preset.id) }) { Text("删除") } } } }
         }

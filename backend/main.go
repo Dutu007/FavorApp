@@ -201,7 +201,7 @@ func (s *server) addScore(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.QueryRow(r.Context(), `select (select display_name from app_users where id=$1), (select display_name from app_users where id=$2)`, uid, target).Scan(&actorDisplayName, &targetDisplayName)
 	writeJSON(w, 200, eventJSON{eid.String(), uid.String(), actorDisplayName, targetDisplayName, req.Delta, next, optional(req.Note), created})
 }
-type ruleChangeRequestBody struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
+type ruleChangeRequestBody struct { AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 type pendingRulesJSON struct { ID string `json:"id"`; RequesterID string `json:"requester_id"`; Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"`; CreatedAt time.Time `json:"created_at"` }
 type ruleDecisionJSON struct { RequesterID string `json:"requester_id"`; Status string `json:"status"`; RespondedAt time.Time `json:"responded_at"` }
 
@@ -210,15 +210,19 @@ func (s *server) createRulesRequest(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) { return }
 	addMin, addMax, subtractMin, subtractMax := req.AddMin, req.AddMax, req.SubtractMin, req.SubtractMax
 	if addMin == 0 { addMin = 1 }; if addMax == 0 { addMax = 5 }; if subtractMin == 0 { subtractMin = 1 }; if subtractMax == 0 { subtractMax = 5 }
-	if code := validateScoreRules(req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); code != "" { errorJSON(w, 400, code); return }
+	if addMin < 1 || addMax < addMin || addMax > 100 { errorJSON(w, 400, "invalid_add_range"); return }
+	if subtractMin < 1 || subtractMax < subtractMin || subtractMax > 100 { errorJSON(w, 400, "invalid_subtract_range"); return }
 	uid := userID(r); var cid uuid.UUID
 	if err := s.db.QueryRow(r.Context(), `select id from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid); err != nil { errorJSON(w, 409, "not_matched"); return }
 	var pendingID uuid.UUID
 	if err := s.db.QueryRow(r.Context(), `select id from rule_change_requests where couple_id=$1 and status='pending'`, cid).Scan(&pendingID); err == nil { errorJSON(w, 409, "request_pending"); return }
-	var bad bool; _ = s.db.QueryRow(r.Context(), `select exists(select 1 from couple_scores where couple_id=$1 and (($2::integer is not null and current_score<$2) or ($3::integer is not null and current_score>$3)))`, cid, req.Min, req.Max).Scan(&bad)
+	// Initial score and total bounds stay as they are; only the per-event ranges change.
+	var initial int; var min, max *int
+	if err := s.db.QueryRow(r.Context(), `select initial_score,min_score,max_score from score_settings where couple_id=$1`, cid).Scan(&initial, &min, &max); err != nil { errorJSON(w, 500, "database_error"); return }
+	var bad bool; _ = s.db.QueryRow(r.Context(), `select exists(select 1 from couple_scores where couple_id=$1 and (($2::integer is not null and current_score<$2) or ($3::integer is not null and current_score>$3)))`, cid, min, max).Scan(&bad)
 	if bad { errorJSON(w, 400, "range_does_not_include_current_score"); return }
 	id := uuid.New()
-	if _, err := s.db.Exec(r.Context(), `insert into rule_change_requests(id,couple_id,requester_id,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, cid, uid, req.Initial, req.Min, req.Max, addMin, addMax, subtractMin, subtractMax); err != nil {
+	if _, err := s.db.Exec(r.Context(), `insert into rule_change_requests(id,couple_id,requester_id,initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, cid, uid, initial, min, max, addMin, addMax, subtractMin, subtractMax); err != nil {
 		// The partial unique index guards against two simultaneous requests.
 		if strings.Contains(err.Error(), "duplicate") { errorJSON(w, 409, "request_pending") } else { errorJSON(w, 500, "database_error") }
 		return

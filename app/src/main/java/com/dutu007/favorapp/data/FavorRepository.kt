@@ -21,7 +21,7 @@ import kotlinx.serialization.json.Json
 @Serializable private data class NicknameRequest(val nickname: String)
 @Serializable private data class InviteCreateRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int?, @SerialName("max_score") val max: Int?, @SerialName("add_min") val addMin: Int, @SerialName("add_max") val addMax: Int, @SerialName("subtract_min") val subtractMin: Int, @SerialName("subtract_max") val subtractMax: Int)
 @Serializable private data class ScoreRequest(val delta: Int, val note: String? = null, @SerialName("idempotency_key") val idempotencyKey: String)
-@Serializable private data class RulesChangeRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
+@Serializable private data class RulesChangeRequest(@SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class AuthResponse(val token: String, val user: UserDto)
 @Serializable private data class UserDto(val id: String, val username: String, @SerialName("display_name") val displayName: String)
 @Serializable private data class InviteResponse(val code: String)
@@ -48,7 +48,7 @@ class FavorRepository(context: Context) {
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
     suspend fun addScore(delta: Int, note: String?, idempotencyKey: String) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, idempotencyKey)) }.bodyChecked<EventDto>() }
     suspend fun updateNickname(nickname: String) { client.put("$baseUrl/api/v1/couple/nickname") { auth(); json(NicknameRequest(nickname)) }.check() }
-    suspend fun createRulesRequest(initial: Int, min: Int?, max: Int?, addMin: Int, addMax: Int, subtractMin: Int, subtractMax: Int) { client.post("$baseUrl/api/v1/score-settings/requests") { auth(); json(RulesChangeRequest(initial, min, max, addMin, addMax, subtractMin, subtractMax)) }.check() }
+    suspend fun createRulesRequest(addMin: Int, addMax: Int, subtractMin: Int, subtractMax: Int) { client.post("$baseUrl/api/v1/score-settings/requests") { auth(); json(RulesChangeRequest(addMin, addMax, subtractMin, subtractMax)) }.check() }
     suspend fun acceptRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/accept") { auth() }.check() }
     suspend fun rejectRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/reject") { auth() }.check() }
     suspend fun cancelRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/cancel") { auth() }.check() }

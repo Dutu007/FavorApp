@@ -328,36 +328,25 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun requestRulesChange(initialText: String, minText: String, maxText: String, addMinText: String, addMaxText: String, subtractMinText: String, subtractMaxText: String): Boolean {
-        val initial = initialText.toIntOrNull()
-        val min = minText.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
-        val max = maxText.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
+    fun requestRulesChange(addMinText: String, addMaxText: String, subtractMinText: String, subtractMaxText: String): Boolean {
         val addMin = addMinText.toIntOrNull()
         val addMax = addMaxText.toIntOrNull()
         val subtractMin = subtractMinText.toIntOrNull()
         val subtractMax = subtractMaxText.toIntOrNull()
-        if (initial == null || addMin == null || addMax == null || subtractMin == null || subtractMax == null || (minText.isNotBlank() && min == null) || (maxText.isNotBlank() && max == null)) {
-            _uiState.update { it.copy(error = "分数设置必须是整数") }
-            return false
-        }
-        if (min != null && max != null && min > max) {
-            _uiState.update { it.copy(error = "最低分不能大于最高分") }
-            return false
-        }
-        if ((min != null && initial < min) || (max != null && initial > max)) {
-            _uiState.update { it.copy(error = "初始分数必须在总分上下限内") }
+        if (addMin == null || addMax == null || subtractMin == null || subtractMax == null) {
+            _uiState.update { it.copy(error = "单次加减分范围必须是整数") }
             return false
         }
         if (addMin !in 1..100 || addMax !in addMin..100) {
-            _uiState.update { it.copy(error = "单次加分绝对值范围需为 1-100，且最小值不能大于最大值") }
+            _uiState.update { it.copy(error = "单次加分范围需为正数1~100，且最小值不能大于最大值") }
             return false
         }
         if (subtractMin !in 1..100 || subtractMax !in subtractMin..100) {
-            _uiState.update { it.copy(error = "单次扣分绝对值范围需为 1-100，且最小值不能大于最大值") }
+            _uiState.update { it.copy(error = "单次扣分范围需为正数1~100，且最小值不能大于最大值") }
             return false
         }
         runBusy {
-            repository.createRulesRequest(initial, min, max, addMin, addMax, subtractMin, subtractMax)
+            repository.createRulesRequest(addMin, addMax, subtractMin, subtractMax)
             _uiState.update { it.copy(message = "修改请求已发送，等待对方同意") }
             loadSnapshot()
         }

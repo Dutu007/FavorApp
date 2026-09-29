@@ -715,7 +715,10 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
             item {
                 SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
             }
-            item { SettingsRow("记分规则", "初始 ${state.snapshot?.settings?.initialScore ?: 0} 分") { page = "rules" } }
+            item {
+                val rulesSubtitle = if (state.snapshot?.pendingRules != null) "有待处理的修改请求" else "初始 ${state.snapshot?.settings?.initialScore ?: 0} 分"
+                SettingsRow("记分规则", rulesSubtitle) { page = "rules" }
+            }
             item { SettingsRow("添加记录预设", "${state.scorePresets.size}/$PRESET_MAX_COUNT 项") { page = "presets" } }
             item {
                 Spacer(Modifier.height(10.dp))
@@ -780,6 +783,8 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 
 @Composable private fun RulesSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     val pending = state.snapshot?.pendingRules
+    // Pending requests arrive through snapshot refreshes; fetch fresh state on entry.
+    LaunchedEffect(Unit) { viewModel.refreshSnapshot() }
     SettingsPageScaffold("记分规则", onBack) { padding ->
         Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Notice(state, viewModel::clearNotice)

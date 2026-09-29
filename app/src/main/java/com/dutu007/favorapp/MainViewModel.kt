@@ -409,6 +409,7 @@ class MainViewModel : ViewModel() {
         return when {
             raw.contains("invalid_or_expired_code", ignoreCase = true) -> "邀请码无效或已过期"
             raw.contains("already_matched", ignoreCase = true) -> "你已经匹配过恋人了"
+            raw.contains("not_matched", ignoreCase = true) -> "还没有匹配恋人，先完成配对再试"
             raw.contains("cannot_match_self", ignoreCase = true) -> "不能使用自己的邀请码"
             raw.contains("below_minimum", ignoreCase = true) -> "加分后会低于最低分限制"
             raw.contains("above_maximum", ignoreCase = true) -> "加分后会超过最高分限制"

@@ -15,7 +15,6 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.util.UUID
 
 @Serializable private data class AuthRequest(val username: String, val password: String, @SerialName("display_name") val displayName: String? = null)
 @Serializable private data class InviteRequest(val code: String)
@@ -47,7 +46,7 @@ class FavorRepository(context: Context) {
     fun clearSession() { preferences.edit().clear().apply() }
     suspend fun createInvite(rules: ScoreRule): String = client.post("$baseUrl/api/v1/invites") { auth(); json(InviteCreateRequest(rules.initialScore, rules.minScore, rules.maxScore, rules.addMin, rules.addMax, rules.subtractMin, rules.subtractMax)) }.bodyChecked<InviteResponse>().code
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
-    suspend fun addScore(delta: Int, note: String?) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, UUID.randomUUID().toString())) }.bodyChecked<EventDto>() }
+    suspend fun addScore(delta: Int, note: String?, idempotencyKey: String) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, idempotencyKey)) }.bodyChecked<EventDto>() }
     suspend fun updateNickname(nickname: String) { client.put("$baseUrl/api/v1/couple/nickname") { auth(); json(NicknameRequest(nickname)) }.check() }
     suspend fun createRulesRequest(initial: Int, min: Int?, max: Int?, addMin: Int, addMax: Int, subtractMin: Int, subtractMax: Int) { client.post("$baseUrl/api/v1/score-settings/requests") { auth(); json(RulesChangeRequest(initial, min, max, addMin, addMax, subtractMin, subtractMax)) }.check() }
     suspend fun acceptRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/accept") { auth() }.check() }

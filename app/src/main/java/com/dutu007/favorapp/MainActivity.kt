@@ -772,7 +772,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 @Composable private fun NicknameSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     var nickname by rememberSaveable { mutableStateOf(state.snapshot?.partnerNickname.orEmpty()) }
     SettingsPageScaffold("恋人昵称", onBack) { padding ->
-        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("这是你对 TA 的专属称呼，只对你自己可见。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡")
             Notice(state, viewModel::clearNotice)
@@ -787,7 +787,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
     // Pending requests arrive through snapshot refreshes; fetch fresh state on entry.
     LaunchedEffect(Unit) { viewModel.refreshSnapshot() }
     SettingsPageScaffold("记分规则", onBack) { padding ->
-        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Notice(state, viewModel::clearNotice)
             if (pending != null) {
                 PendingRulesCard(state, pending, viewModel)
@@ -853,7 +853,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 
 @Composable private fun PresetSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     SettingsPageScaffold("添加记录预设", onBack) { padding ->
-        LazyColumn(Modifier.padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
+        LazyColumn(Modifier.fillMaxSize().imePadding().padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
             item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "备注，例如：乖乖早睡", "♡") }
             item { Text("备注最多 $NOTE_MAX_LENGTH 个字，常用记录最多保存 $PRESET_MAX_COUNT 条（当前 ${state.scorePresets.size}/$PRESET_MAX_COUNT）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset) { Text("添加") } } }

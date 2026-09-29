@@ -288,6 +288,11 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    // A retry of the same action reuses the idempotency key so a request that
+    // actually landed on the server cannot be recorded twice.
+    private var scoreActionKey: Pair<Int, String?>? = null
+    private var scoreIdempotencyKey: String? = null
+
     fun addScore(delta: Int, note: String?) {
         val snapshot = _uiState.value.snapshot ?: return
         val partner = snapshot.cards.firstOrNull { it.userId != snapshot.currentUserId }
@@ -299,8 +304,16 @@ class MainViewModel : ViewModel() {
             _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }
             return
         }
+        val action = delta to note?.trim()
+        if (scoreActionKey != action || scoreIdempotencyKey == null) {
+            scoreIdempotencyKey = UUID.randomUUID().toString()
+            scoreActionKey = action
+        }
+        val key = scoreIdempotencyKey!!
         runBusy {
-            repository.addScore(delta, note)
+            repository.addScore(delta, note, key)
+            scoreIdempotencyKey = null
+            scoreActionKey = null
             loadSnapshot()
         }
     }

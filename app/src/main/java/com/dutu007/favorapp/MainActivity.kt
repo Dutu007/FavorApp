@@ -256,7 +256,7 @@ private fun AuthScreen(state: AppUiState, viewModel: MainViewModel) {
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     ) {
                         if (state.busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                        else Text(if (state.authMode == AuthMode.SIGN_IN) "登录 FavorApp" else "开始记录心动", fontWeight = FontWeight.Bold)
+                        else Text(if (state.authMode == AuthMode.SIGN_IN) "登录 Favor" else "开始记录心动", fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(8.dp))
                     TextButton(

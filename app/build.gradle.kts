@@ -12,7 +12,16 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use(localProperties::load)
 }
 
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore/keystore.properties")
+    if (file.exists()) file.inputStream().use(::load)
+}
+
 val apiBaseUrl = localProperties.getProperty("api.baseUrl", "https://api.zengdeming.cn")
+
+// CI passes -Papp.versionCode / -Papp.versionName so every release is monotonic.
+val appVersionCode = (project.findProperty("app.versionCode") as String?)?.toInt() ?: 1
+val appVersionName = (project.findProperty("app.versionName") as String?) ?: "1.0.0"
 
 android {
     namespace = "com.dutu007.favorapp"
@@ -22,10 +31,34 @@ android {
         applicationId = "com.dutu007.favorapp"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            val storeFilePath = System.getenv("FAVORAPP_STORE_FILE") ?: keystoreProperties.getProperty("storeFile")
+            if (storeFilePath != null) {
+                storeFile = rootProject.file(storeFilePath)
+                storePassword = System.getenv("FAVORAPP_STORE_PASSWORD") ?: keystoreProperties.getProperty("storePassword")
+                keyAlias = System.getenv("FAVORAPP_KEY_ALIAS") ?: keystoreProperties.getProperty("keyAlias")
+                keyPassword = System.getenv("FAVORAPP_KEY_PASSWORD") ?: keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // Not minified on purpose: keeps R8/keep-rule maintenance off a two-user app.
+            isMinifyEnabled = false
+            signingConfig = if (signingConfigs.getByName("release").storeFile != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+        }
     }
 
     buildFeatures {

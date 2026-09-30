@@ -64,3 +64,28 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Restore release keystore
+        if: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+        env:
+          FAVORAPP_KEYSTORE_BASE64: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p keystore
+          echo "$FAVORAPP_KEYSTORE_BASE64" | base64 -d > keystore/favorapp-release.jks
+
+      - name: Assemble release APK
+        if: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+        env:
+          FAVORAPP_STORE_PASSWORD: ${{ secrets.FAVORAPP_STORE_PASSWORD }}
+          FAVORAPP_KEY_ALIAS: ${{ secrets.FAVORAPP_KEY_ALIAS }}
+          FAVORAPP_KEY_PASSWORD: ${{ secrets.FAVORAPP_KEY_PASSWORD }}
+        run: gradle assembleRelease -Papp.versionCode=${{ github.run_number }} -Papp.versionName=1.0.${{ github.run_number }}
+
+      - name: Upload signed release APK
+        if: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: FavorApp-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 90

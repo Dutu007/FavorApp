@@ -12,6 +12,7 @@ DEPLOYMENT_LOCAL.md
 .env.*
 !.env.example
 certs/
+keystore/
 *.keystore
 *.jks
 

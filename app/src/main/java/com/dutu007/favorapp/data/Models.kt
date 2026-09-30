@@ -6,5 +6,6 @@ data class ScoreRule(val initialScore: Int = 0, val minScore: Int? = null, val m
 data class ScoreSettingRow(val coupleId: String, val initialScore: Int, val minScore: Int? = null, val maxScore: Int? = null, val addMin: Int = 1, val addMax: Int = 5, val subtractMin: Int = 1, val subtractMax: Int = 5)
 data class CoupleSnapshot(val coupleId: String, val currentUserId: String, val currentUserName: String, val partnerName: String, val partnerNickname: String, val cards: List<ScoreCard>, val events: List<ScoreEventItem>, val settings: ScoreSettingRow, val pendingRules: PendingRuleRequest? = null, val latestRuleDecision: RuleDecision? = null)
 data class ScorePreset(val id: String, val label: String, val delta: Int)
+data class AppRelease(val versionCode: Int, val versionName: String, val notes: String, val sha256: String, val size: Long)
 data class PendingRuleRequest(val id: String, val requesterId: String, val initialScore: Int, val minScore: Int? = null, val maxScore: Int? = null, val addMin: Int = 1, val addMax: Int = 5, val subtractMin: Int = 1, val subtractMax: Int = 5)
 data class RuleDecision(val requesterId: String, val status: String, val respondedAt: String)

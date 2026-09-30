@@ -53,6 +53,7 @@ type nicknameRequest struct { Nickname string `json:"nickname"` }
 
 type userJSON struct { ID string `json:"id"`; Username string `json:"username"`; DisplayName string `json:"display_name"` }
 type authResponse struct { Token string `json:"token"`; User userJSON `json:"user"` }
+type appReleaseJSON struct { VersionCode int `json:"version_code"`; VersionName string `json:"version_name"`; Notes string `json:"notes"`; Sha256 string `json:"sha256"`; Size int64 `json:"size"` }
 
 func main() {
 	ctx := context.Background()
@@ -91,6 +92,8 @@ func main() {
 	mux.Handle("PUT /api/v1/me/avatar", s.auth(http.HandlerFunc(s.updateAvatar)))
 	mux.Handle("DELETE /api/v1/me/avatar", s.auth(http.HandlerFunc(s.deleteAvatar)))
 	mux.Handle("GET /api/v1/users/{id}/avatar", s.auth(http.HandlerFunc(s.avatar)))
+	mux.Handle("GET /api/v1/app/latest", s.auth(http.HandlerFunc(s.latestApp)))
+	mux.Handle("GET /api/v1/app/apk", s.auth(http.HandlerFunc(s.appAPK)))
 
 	addr := os.Getenv("LISTEN_ADDR"); if addr == "" { addr = ":8080" }
 	log.Printf("FavorApp API listening on %s", addr)
@@ -216,6 +219,28 @@ func (s *server) avatar(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "", *updated, bytes.NewReader(img))
 }
 func imageContentType(b []byte) string { switch { case len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF: return "image/jpeg"; case len(b) >= 8 && b[0] == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G': return "image/png"; case len(b) >= 12 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WEBP": return "image/webp" }; return "" }
+
+func appReleaseDir() string { if dir := os.Getenv("APP_RELEASE_DIR"); dir != "" { return dir }; return "/data/apks" }
+
+func (s *server) latestApp(w http.ResponseWriter, r *http.Request) {
+	raw, err := os.ReadFile(filepath.Join(appReleaseDir(), "latest.json"))
+	if err != nil { errorJSON(w, 404, "release_not_found"); return }
+	var rel appReleaseJSON
+	if err = json.Unmarshal(raw, &rel); err != nil { errorJSON(w, 500, "release_not_found"); return }
+	writeJSON(w, 200, rel)
+}
+
+func (s *server) appAPK(w http.ResponseWriter, r *http.Request) {
+	file, err := os.Open(filepath.Join(appReleaseDir(), "favorapp.apk"))
+	if err != nil { errorJSON(w, 404, "release_not_found"); return }
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil { errorJSON(w, 500, "database_error"); return }
+	// A multi-megabyte download can outlast the server's global write timeout.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	http.ServeContent(w, r, "favorapp.apk", info.ModTime(), file)
+}
 func (s *server) addScore(w http.ResponseWriter, r *http.Request) {
 	var req scoreRequest; if !decodeJSON(w, r, &req) { return }; if req.Delta == 0 || len(req.IdempotencyKey) < 8 || len(req.IdempotencyKey) > 80 { errorJSON(w, 400, "invalid_score_request"); return }; if len([]rune(req.Note)) > 200 { errorJSON(w, 400, "note_too_long"); return }
 	uid := userID(r); var cid, target uuid.UUID; err := s.db.QueryRow(r.Context(), `select id,case when member_a=$1 then member_b else member_a end from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &target); if err != nil { errorJSON(w, 409, "not_matched"); return }

@@ -8,13 +8,17 @@ import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.*
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.contentLength
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.readAvailable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.File
 
 @Serializable private data class AuthRequest(val username: String, val password: String, @SerialName("display_name") val displayName: String? = null)
 @Serializable private data class InviteRequest(val code: String)
@@ -32,6 +36,7 @@ import kotlinx.serialization.json.Json
 @Serializable private data class RuleDecisionDto(@SerialName("requester_id") val requesterId: String, val status: String, @SerialName("responded_at") val respondedAt: String)
 @Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, @SerialName("partner_nickname") val partnerNickname: String = "", val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto, @SerialName("pending_rules") val pendingRules: PendingRulesDto? = null, @SerialName("latest_rule_decision") val latestRuleDecision: RuleDecisionDto? = null)
 @Serializable private data class ErrorDto(val error: String)
+@Serializable private data class AppReleaseDto(val version_code: Int, val version_name: String, val notes: String = "", val sha256: String = "", val size: Long = 0)
 
 class FavorRepository(context: Context) {
     private val preferences = context.getSharedPreferences("favorapp_session", Context.MODE_PRIVATE)
@@ -56,6 +61,26 @@ class FavorRepository(context: Context) {
     suspend fun acceptRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/accept") { auth() }.check() }
     suspend fun rejectRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/reject") { auth() }.check() }
     suspend fun cancelRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/cancel") { auth() }.check() }
+    suspend fun latestRelease(): AppRelease { val dto = client.get("$baseUrl/api/v1/app/latest") { auth() }.bodyChecked<AppReleaseDto>(); return AppRelease(dto.version_code, dto.version_name, dto.notes, dto.sha256, dto.size) }
+    suspend fun downloadApk(destination: File, onProgress: (Long, Long) -> Unit) {
+        client.prepareGet("$baseUrl/api/v1/app/apk") { auth() }.execute { response ->
+            if (response.status.value !in 200..299) throw ApiException(response.status.value, "download_failed")
+            val total = response.contentLength() ?: -1L
+            destination.parentFile?.mkdirs()
+            val channel = response.bodyAsChannel()
+            destination.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
+                var received = 0L
+                while (true) {
+                    val read = channel.readAvailable(buffer, 0, buffer.size)
+                    if (read <= 0) break
+                    out.write(buffer, 0, read)
+                    received += read
+                    onProgress(received, total)
+                }
+            }
+        }
+    }
     suspend fun loadSnapshot(from: String? = null, to: String? = null, keyword: String? = null): CoupleSnapshot? { val response = client.get("$baseUrl/api/v1/couple") { auth(); url { from?.takeIf { it.isNotBlank() }?.let { parameters.append("from", it) }; to?.takeIf { it.isNotBlank() }?.let { parameters.append("to", it) }; keyword?.takeIf { it.isNotBlank() }?.let { parameters.append("keyword", it) } } }; response.check(); val raw = response.bodyAsText().trim(); if (raw == "null") return null; return json.decodeFromString<CoupleDto>(raw).toSnapshot() }
 
     private fun saveAuth(auth: AuthResponse) { preferences.edit().putString("token", auth.token).putString("user_id", auth.user.id).apply() }

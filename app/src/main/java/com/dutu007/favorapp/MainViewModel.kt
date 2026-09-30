@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ApiException
+import com.dutu007.favorapp.data.AppRelease
 import com.dutu007.favorapp.data.FavorRepository
 import com.dutu007.favorapp.data.ScoreRule
 import com.dutu007.favorapp.data.ScoreSettingRow
@@ -56,6 +57,11 @@ data class AppUiState(
     val error: String? = null,
     val flash: String? = null,
     val flashError: Boolean = false,
+    val updateAvailable: AppRelease? = null,
+    val updateDownloading: Boolean = false,
+    val updateProgress: Int = 0,
+    val updateError: String? = null,
+    val updateReadyPath: String? = null,
 )
 
 class MainViewModel : ViewModel() {
@@ -158,6 +164,53 @@ class MainViewModel : ViewModel() {
 
     fun avatarUrlFor(userId: String, version: Long): String? = repository.avatarUrl(userId, version)
     val authToken: String get() = repository.authToken()
+    val currentVersionName: String get() = com.dutu007.favorapp.BuildConfig.VERSION_NAME
+
+    fun checkForUpdate(manual: Boolean = false) {
+        viewModelScope.launch {
+            try {
+                val release = repository.latestRelease()
+                if (release.versionCode > com.dutu007.favorapp.BuildConfig.VERSION_CODE) {
+                    _uiState.update { it.copy(updateAvailable = release, updateError = null) }
+                } else if (manual) {
+                    _uiState.update { it.copy(message = "已是最新版本 $currentVersionName") }
+                }
+            } catch (error: Exception) {
+                if (manual) {
+                    val text = if (error is ApiException && error.statusCode == 404) "服务器还没有可下载的版本" else error.userMessage()
+                    _uiState.update { it.copy(error = text) }
+                }
+            }
+        }
+    }
+
+    fun dismissUpdate() = _uiState.update { it.copy(updateAvailable = null, updateError = null) }
+
+    fun noteInstallPermissionNeeded() = _uiState.update { it.copy(updateError = "请先允许安装未知应用，返回后再点一次“立即更新”") }
+
+    fun downloadUpdate(context: Context) {
+        val release = _uiState.value.updateAvailable ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(updateDownloading = true, updateProgress = 0, updateError = null) }
+            try {
+                val dir = java.io.File(context.cacheDir, "updates").apply {
+                    mkdirs()
+                    listFiles()?.forEach { it.delete() }
+                }
+                val target = java.io.File(dir, "favor-${release.versionName}.apk")
+                withContext(Dispatchers.IO) { repository.downloadApk(target) { received, total -> if (total > 0) _uiState.update { s -> s.copy(updateProgress = (received * 100 / total).toInt()) } } }
+                if (release.sha256.isNotBlank() && !target.sha256().equals(release.sha256, ignoreCase = true)) {
+                    target.delete()
+                    throw IllegalStateException("安装包校验失败，请重新下载")
+                }
+                _uiState.update { it.copy(updateDownloading = false, updateReadyPath = target.absolutePath, updateAvailable = null) }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(updateDownloading = false, updateError = error.message ?: "下载失败，请稍后重试") }
+            }
+        }
+    }
+
+    fun consumeReadyUpdate() = _uiState.update { it.copy(updateReadyPath = null) }
 
     fun uploadAvatarFromUri(context: Context, uri: Uri) {
         runBusy {
@@ -235,6 +288,7 @@ class MainViewModel : ViewModel() {
             }
             try {
                 loadSnapshot()
+                checkForUpdate()
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
                     repository.clearSession()
@@ -522,4 +576,17 @@ class MainViewModel : ViewModel() {
             else -> raw.substringBefore(" (Request").take(160)
         }
     }
+}
+
+private fun java.io.File.sha256(): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    inputStream().use { stream ->
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = stream.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }

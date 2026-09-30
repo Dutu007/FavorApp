@@ -7,7 +7,6 @@ on:
     paths:
       - ".github/workflows/android-build.yml"
       - "app/**"
-      - "backend/**"
       - "*.gradle.kts"
       - "gradle.properties"
       - "settings.gradle.kts"
@@ -16,7 +15,6 @@ on:
     paths:
       - ".github/workflows/android-build.yml"
       - "app/**"
-      - "backend/**"
       - "*.gradle.kts"
       - "gradle.properties"
       - "settings.gradle.kts"
@@ -27,6 +25,7 @@ permissions:
 env:
   # secrets context is not readable inside step-level "if"; bridge it through env.
   KEYSTORE_PRESENT: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+  SERVER_DEPLOY_ENABLED: ${{ secrets.SERVER_SSH_KEY != '' }}
 
 jobs:
   build:
@@ -94,3 +93,31 @@ jobs:
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 90
+
+      - name: Publish release to server
+        if: env.KEYSTORE_PRESENT == 'true' && env.SERVER_DEPLOY_ENABLED == 'true'
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          APP_DIR: /home/dutu/workspace/favor-app
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.0.${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          APK=app/build/outputs/apk/release/app-release.apk
+          jq -n --argjson vc "$VERSION_CODE" --arg vn "$VERSION_NAME" \
+                --arg notes "$(git log -1 --pretty=%s)" \
+                --arg sha "$(sha256sum "$APK" | cut -d' ' -f1)" \
+                --argjson size "$(stat -c%s "$APK")" \
+                '{version_code:$vc, version_name:$vn, notes:$notes, sha256:$sha, size:$size}' > latest.json
+          SSH_OPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          TARGET="$SERVER_USER@$SERVER_HOST"
+          ssh $SSH_OPTS "$TARGET" "mkdir -p $APP_DIR/apks"
+          scp $SSH_OPTS "$APK" "$TARGET:$APP_DIR/apks/favorapp.apk.tmp"
+          scp $SSH_OPTS latest.json "$TARGET:$APP_DIR/apks/latest.json.tmp"
+          # Swap the APK first so latest.json never advertises a stale file.
+          ssh $SSH_OPTS "$TARGET" "cd $APP_DIR/apks && mv favorapp.apk.tmp favorapp.apk && mv latest.json.tmp latest.json && chmod 644 favorapp.apk latest.json && ls -l"

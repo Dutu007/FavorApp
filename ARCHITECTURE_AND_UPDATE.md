@@ -54,6 +54,36 @@ curl http://127.0.0.1:8080/api/v1/health
 curl https://api.zengdeming.cn/api/v1/health
 ```
 
+## 更新 APP
+
+推送包含 `app/**` 改动的提交后会自动完成发布，不需要手动传 APK：
+
+1. GitHub Actions 构建签名的 release APK（版本号 = `1.0.<构建编号>`）
+2. 工作流把 `favorapp.apk` 和 `latest.json` 上传到服务器 `favor-app/apks/`
+3. API 通过 `/api/v1/app/latest` 对外公布版本，`/api/v1/app/apk` 提供下载
+4. 两台手机打开 App 时会自动检查更新，弹窗提示后可直接在 App 内下载并安装
+
+GitHub 仓库需要配置以下 Actions secrets（Settings → Secrets and variables → Actions）：
+
+| Secret | 说明 |
+| --- | --- |
+| `FAVORAPP_KEYSTORE_BASE64` | release 密钥库的 base64 |
+| `FAVORAPP_STORE_PASSWORD` | 密钥库口令 |
+| `FAVORAPP_KEY_ALIAS` | 密钥别名（`favorapp`） |
+| `FAVORAPP_KEY_PASSWORD` | 密钥口令 |
+| `SERVER_HOST` | 服务器地址 |
+| `SERVER_USER` | SSH 用户 |
+| `SERVER_SSH_KEY` | 部署用 SSH 私钥（对应公钥写入服务器 `authorized_keys`） |
+
+`keystore/` 目录和口令只保存在本地，不要提交。密钥库丢失后已安装的 App 将无法覆盖更新。
+
+服务器上的 `compose.yaml` 需要把 `favor-app/apks` 挂载给 API 容器（只读）：
+
+```yaml
+    volumes:
+      - ./apks:/data/apks:ro
+```
+
 ## 更新 Compose 配置
 
 ```powershell

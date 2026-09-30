@@ -80,6 +80,7 @@ jobs:
       - name: Assemble release APK
         if: env.KEYSTORE_PRESENT == 'true'
         env:
+          FAVORAPP_STORE_FILE: keystore/favorapp-release.jks
           FAVORAPP_STORE_PASSWORD: ${{ secrets.FAVORAPP_STORE_PASSWORD }}
           FAVORAPP_KEY_ALIAS: ${{ secrets.FAVORAPP_KEY_ALIAS }}
           FAVORAPP_KEY_PASSWORD: ${{ secrets.FAVORAPP_KEY_PASSWORD }}

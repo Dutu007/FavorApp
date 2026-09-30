@@ -24,6 +24,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # secrets context is not readable inside step-level "if"; bridge it through env.
+  KEYSTORE_PRESENT: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -66,7 +70,7 @@ jobs:
           retention-days: 14
 
       - name: Restore release keystore
-        if: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+        if: env.KEYSTORE_PRESENT == 'true'
         env:
           FAVORAPP_KEYSTORE_BASE64: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 }}
         run: |
@@ -74,7 +78,7 @@ jobs:
           echo "$FAVORAPP_KEYSTORE_BASE64" | base64 -d > keystore/favorapp-release.jks
 
       - name: Assemble release APK
-        if: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+        if: env.KEYSTORE_PRESENT == 'true'
         env:
           FAVORAPP_STORE_PASSWORD: ${{ secrets.FAVORAPP_STORE_PASSWORD }}
           FAVORAPP_KEY_ALIAS: ${{ secrets.FAVORAPP_KEY_ALIAS }}
@@ -82,7 +86,7 @@ jobs:
         run: gradle assembleRelease -Papp.versionCode=${{ github.run_number }} -Papp.versionName=1.0.${{ github.run_number }}
 
       - name: Upload signed release APK
-        if: ${{ secrets.FAVORAPP_KEYSTORE_BASE64 != '' }}
+        if: env.KEYSTORE_PRESENT == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: FavorApp-release-apk

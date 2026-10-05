@@ -25,17 +25,20 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -82,6 +85,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -703,37 +707,62 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot, viewModel: MainViewModel) {
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
     ) {
-        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("T O G E T H E R", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-            Spacer(Modifier.height(20.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    AvatarBubble(snapshot.currentUserName, myCard?.let { viewModel.avatarUrlFor(it.userId, it.avatarVersion) }, viewModel.authToken)
-                    Spacer(Modifier.height(8.dp))
-                    Text(snapshot.currentUserName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                    Text("我", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                }
-                Text("♥", fontSize = 28.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 16.dp))
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    AvatarBubble(snapshot.partnerNickname.ifBlank { snapshot.partnerName }, partnerCard?.let { viewModel.avatarUrlFor(it.userId, it.avatarVersion) }, viewModel.authToken)
-                    Spacer(Modifier.height(8.dp))
-                    Text(snapshot.partnerNickname.ifBlank { snapshot.partnerName }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                    Text("恋人", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                }
+        Column(Modifier.fillMaxWidth()) {
+            // The artwork keeps its two vignette circles at fixed fractions of the width,
+            // so the live avatars and names stay glued to them on any screen size.
+            BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1920f / 1200f)) {
+                val heroW = maxWidth
+                val heroH = maxHeight
+                val avatarSize = heroW * 0.25f
+                val nameWidth = heroW * 0.42f
+                Image(
+                    painter = painterResource(R.drawable.home_hero_bg),
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.matchParentSize(),
+                )
+                AvatarBubble(
+                    snapshot.currentUserName,
+                    myCard?.let { viewModel.avatarUrlFor(it.userId, it.avatarVersion) },
+                    viewModel.authToken,
+                    size = avatarSize,
+                    modifier = Modifier.offset(heroW * 0.2370f - avatarSize / 2, heroH * 0.4917f - avatarSize / 2),
+                )
+                AvatarBubble(
+                    snapshot.partnerNickname.ifBlank { snapshot.partnerName },
+                    partnerCard?.let { viewModel.avatarUrlFor(it.userId, it.avatarVersion) },
+                    viewModel.authToken,
+                    size = avatarSize,
+                    modifier = Modifier.offset(heroW * 0.7760f - avatarSize / 2, heroH * 0.4875f - avatarSize / 2),
+                )
+                CoupleHeroName(snapshot.currentUserName, "我", heroW * 0.2370f, heroH * 0.73f, nameWidth)
+                CoupleHeroName(snapshot.partnerNickname.ifBlank { snapshot.partnerName }, "恋人", heroW * 0.7760f, heroH * 0.73f, nameWidth)
             }
-            Spacer(Modifier.height(20.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 snapshot.cards.sortedBy { it.userId != snapshot.currentUserId }.forEach {
                     ScoreCardView(if (it.userId == snapshot.currentUserId) "我的分数" else "恋人的分数", it.score, Modifier.weight(1f))
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
 }
+
 @Composable
-private fun AvatarBubble(name: String, avatarUrl: String? = null, token: String = "", size: Dp = 76.dp) {
+private fun CoupleHeroName(name: String, role: String, centerX: Dp, topY: Dp, width: Dp) {
+    Column(
+        modifier = Modifier.offset(centerX - width / 2, topY).width(width),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+        Text(role, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+    }
+}
+@Composable
+private fun AvatarBubble(name: String, avatarUrl: String? = null, token: String = "", size: Dp = 76.dp, modifier: Modifier = Modifier) {
     val initial = name.trim().firstOrNull()?.toString() ?: "♡"
-    Box(modifier = Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
         // Letter stays composed underneath: if the image fails to load it shows through.
         Text(initial, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         if (avatarUrl != null) {

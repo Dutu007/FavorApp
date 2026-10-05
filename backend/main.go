@@ -36,6 +36,7 @@ import (
 var migrationFiles embed.FS
 
 var usernamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{2,19}$`)
+var migrationNumberPattern = regexp.MustCompile(`^(\d+)`)
 var passwordUpper = regexp.MustCompile(`[A-Z]`)
 var passwordLower = regexp.MustCompile(`[a-z]`)
 var passwordDigit = regexp.MustCompile(`[0-9]`)
@@ -121,17 +122,42 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
+// Migrations are identified by the number in their file name
+// (0008_gift_rewards.sql -> 8), so file names can be re-padded without
+// re-running on databases that recorded the old 3-digit names.
+func migrationNumber(name string) int {
+	m := migrationNumberPattern.FindStringSubmatch(name)
+	if m == nil { return -1 }
+	n, err := strconv.Atoi(m[1])
+	if err != nil { return -1 }
+	return n
+}
+
 func migrate(ctx context.Context, db *pgxpool.Pool) error {
 	if _, err := db.Exec(ctx, `create table if not exists schema_migrations (name text primary key, applied_at timestamptz not null default now())`); err != nil { return err }
 	entries, err := fs.ReadDir(migrationFiles, "migrations"); if err != nil { return err }
-	var names []string; for _, e := range entries { if !e.IsDir() { names = append(names, e.Name()) } }; sort.Strings(names)
+	applied := map[int]bool{}
+	rows, err := db.Query(ctx, `select name from schema_migrations`)
+	if err != nil { return err }
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil { rows.Close(); return err }
+		if n := migrationNumber(name); n >= 0 { applied[n] = true }
+	}
+	rows.Close()
+	var names []string
+	for _, e := range entries { if !e.IsDir() && migrationNumber(e.Name()) >= 0 { names = append(names, e.Name()) } }
+	sort.Slice(names, func(i, j int) bool { return migrationNumber(names[i]) < migrationNumber(names[j]) })
 	for _, name := range names {
-		var applied bool; if err := db.QueryRow(ctx, `select exists(select 1 from schema_migrations where name=$1)`, name).Scan(&applied); err != nil { return err }; if applied { continue }
+		n := migrationNumber(name)
+		if applied[n] { continue }
 		// embed.FS always stores slash-separated paths, so join with path (not filepath).
 		data, err := migrationFiles.ReadFile(path.Join("migrations", name)); if err != nil { return err }
 		tx, err := db.Begin(ctx); if err != nil { return err }
 		if _, err = tx.Exec(ctx, string(data)); err == nil { _, err = tx.Exec(ctx, `insert into schema_migrations(name) values($1)`, name) }
-		if err != nil { _ = tx.Rollback(ctx); return fmt.Errorf("migration %s: %w", name, err) }; if err = tx.Commit(ctx); err != nil { return err }
+		if err != nil { _ = tx.Rollback(ctx); return fmt.Errorf("migration %s: %w", name, err) }
+		if err = tx.Commit(ctx); err != nil { return err }
+		applied[n] = true
 	}
 	return nil
 }

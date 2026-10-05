@@ -46,3 +46,11 @@ func TestScoreRulesValidation(t *testing.T) {
 	if code := validateScoreRules(10, &min, &max, 0, 5, 1, 5); code != "invalid_add_range" { t.Fatalf("expected invalid_add_range, got %s", code) }
 	if code := validateScoreRules(10, &min, &max, 1, 5, 6, 5); code != "invalid_subtract_range" { t.Fatalf("expected invalid_subtract_range, got %s", code) }
 }
+
+func TestMigrationNumberParsing(t *testing.T) {
+	cases := map[string]int{"001_initial.sql": 1, "0001_initial.sql": 1, "010_gift_acceptance.sql": 10, "0010_gift_acceptance.sql": 10}
+	for name, want := range cases {
+		if got := migrationNumber(name); got != want { t.Fatalf("migrationNumber(%q) = %d, want %d", name, got, want) }
+	}
+	if got := migrationNumber("notes.txt"); got != -1 { t.Fatalf("expected -1 for unnumbered file, got %d", got) }
+}

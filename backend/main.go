@@ -101,6 +101,7 @@ func main() {
 	mux.Handle("GET /api/v1/gifts", s.auth(http.HandlerFunc(s.gifts)))
 	mux.Handle("PUT /api/v1/gifts/goal", s.auth(http.HandlerFunc(s.setGiftGoal)))
 	mux.Handle("POST /api/v1/gifts", s.auth(http.HandlerFunc(s.createGift)))
+	mux.Handle("POST /api/v1/gifts/{id}/accept", s.auth(http.HandlerFunc(s.acceptGift)))
 	mux.Handle("PUT /api/v1/gifts/{id}/steps", s.auth(http.HandlerFunc(s.updateGiftSteps)))
 	mux.Handle("POST /api/v1/gifts/{id}/progress", s.auth(http.HandlerFunc(s.setGiftProgress)))
 	mux.Handle("POST /api/v1/gifts/{id}/status", s.auth(http.HandlerFunc(s.cancelGift)))
@@ -354,12 +355,9 @@ func encodeGiftSteps(steps []giftStepJSON) string {
 	return string(data)
 }
 
-func defaultGiftSteps(kind string) []giftStepJSON {
-	labels := []string{"已确认礼物", "已下单", "已发货", "已收到礼物"}
-	if kind == "handmade" { labels = []string{"已确认礼物", "已采购材料", "制作中", "已发货", "已收到礼物"} }
-	steps := make([]giftStepJSON, len(labels))
-	for i, label := range labels { steps[i] = giftStepJSON{Label: label} }
-	return steps
+func defaultGiftSteps(kind string) []string {
+	if kind == "handmade" { return []string{"已采购材料", "制作中", "已发货", "已收到礼物"} }
+	return []string{"已下单", "已发货", "已收到礼物"}
 }
 
 func (s *server) coupleID(r *http.Request) (uuid.UUID, error) {
@@ -432,12 +430,35 @@ func (s *server) createGift(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.QueryRow(r.Context(), `select current_score from couple_scores where couple_id=$1 and target_user_id=$2`, cid, uid).Scan(&score); err != nil { errorJSON(w, 500, "database_error"); return }
 	if score < goal { errorJSON(w, 400, "score_below_goal"); return }
 	id := uuid.New()
-	if _, err := s.db.Exec(r.Context(), `insert into gift_rewards(id,couple_id,requester_id,title,kind,note,steps,current_step) values($1,$2,$3,$4,$5,nullif(trim($6),''),$7::jsonb,0)`, id, cid, uid, title, req.Kind, req.Note, encodeGiftSteps(defaultGiftSteps(req.Kind))); err != nil {
+	// Nodes stay empty until the partner accepts and lays out the plan, so the
+	// requester only ever sees progress the preparer has committed to.
+	if _, err := s.db.Exec(r.Context(), `insert into gift_rewards(id,couple_id,requester_id,title,kind,note,steps,current_step,status) values($1,$2,$3,$4,$5,nullif(trim($6),''),'[]'::jsonb,0,'requested')`, id, cid, uid, title, req.Kind, req.Note); err != nil {
 		// The partial unique index keeps a second concurrent redemption out.
 		if strings.Contains(err.Error(), "duplicate") { errorJSON(w, 409, "gift_already_active") } else { errorJSON(w, 500, "database_error") }
 		return
 	}
-	writeJSON(w, 200, map[string]string{"id": id.String(), "status": "active"})
+	writeJSON(w, 200, map[string]string{"id": id.String(), "status": "requested"})
+}
+
+// Only the preparing partner may accept a request; acceptance unlocks plan editing.
+func (s *server) acceptGift(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil { errorJSON(w, 400, "invalid_request"); return }
+	uid := userID(r)
+	tx, err := s.db.Begin(r.Context())
+	if err != nil { errorJSON(w, 500, "database_error"); return }
+	defer tx.Rollback(r.Context())
+	var cid, requester uuid.UUID
+	var status string
+	if err = tx.QueryRow(r.Context(), `select couple_id,requester_id,status from gift_rewards where id=$1 for update`, id).Scan(&cid, &requester, &status); err != nil { errorJSON(w, 404, "gift_not_found"); return }
+	var member bool
+	_ = tx.QueryRow(r.Context(), `select exists(select 1 from couples where id=$1 and status='active' and (member_a=$2 or member_b=$2))`, cid, uid).Scan(&member)
+	if !member { errorJSON(w, 403, "forbidden"); return }
+	if requester == uid { errorJSON(w, 403, "gift_accept_by_giver_only"); return }
+	if status != "requested" { errorJSON(w, 409, "gift_already_handled"); return }
+	if _, err = tx.Exec(r.Context(), `update gift_rewards set status='active',updated_at=now() where id=$1`, id); err != nil { errorJSON(w, 500, "database_error"); return }
+	if err = tx.Commit(r.Context()); err != nil { errorJSON(w, 500, "database_error"); return }
+	writeJSON(w, 200, map[string]string{"status": "active"})
 }
 
 // Editable timeline nodes; timestamps survive edits when a node keeps its label.
@@ -464,6 +485,9 @@ func (s *server) updateGiftSteps(w http.ResponseWriter, r *http.Request) {
 	var member bool
 	_ = tx.QueryRow(r.Context(), `select exists(select 1 from couples where id=$1 and status='active' and (member_a=$2 or member_b=$2))`, cid, uid).Scan(&member)
 	if !member { errorJSON(w, 403, "forbidden"); return }
+	// The preparing partner owns the plan; the requester only watches.
+	if requester == uid { errorJSON(w, 403, "gift_edit_by_giver_only"); return }
+	if status == "requested" { errorJSON(w, 409, "gift_not_accepted"); return }
 	if status != "active" { errorJSON(w, 409, "gift_already_finished"); return }
 	existing := decodeGiftSteps(stepsRaw)
 	merged := make([]giftStepJSON, len(labels))
@@ -495,8 +519,11 @@ func (s *server) setGiftProgress(w http.ResponseWriter, r *http.Request) {
 	var member bool
 	_ = tx.QueryRow(r.Context(), `select exists(select 1 from couples where id=$1 and status='active' and (member_a=$2 or member_b=$2))`, cid, uid).Scan(&member)
 	if !member { errorJSON(w, 403, "forbidden"); return }
+	if requester == uid { errorJSON(w, 403, "gift_edit_by_giver_only"); return }
+	if status == "requested" { errorJSON(w, 409, "gift_not_accepted"); return }
 	if status != "active" { errorJSON(w, 409, "gift_already_finished"); return }
 	steps := decodeGiftSteps(stepsRaw)
+	if len(steps) == 0 { errorJSON(w, 409, "gift_no_steps"); return }
 	if req.CurrentStep < 0 || req.CurrentStep > len(steps) { errorJSON(w, 400, "gift_step_out_of_range"); return }
 	now := time.Now()
 	for i := currentStep; i < req.CurrentStep; i++ { steps[i].At = &now }
@@ -527,7 +554,7 @@ func (s *server) cancelGift(w http.ResponseWriter, r *http.Request) {
 	var member bool
 	_ = tx.QueryRow(r.Context(), `select exists(select 1 from couples where id=$1 and status='active' and (member_a=$2 or member_b=$2))`, cid, uid).Scan(&member)
 	if !member { errorJSON(w, 403, "forbidden"); return }
-	if status != "active" { errorJSON(w, 409, "gift_already_finished"); return }
+	if status != "requested" && status != "active" { errorJSON(w, 409, "gift_already_finished"); return }
 	if requester != uid { errorJSON(w, 403, "cannot_cancel_other_gift"); return }
 	if _, err = tx.Exec(r.Context(), `update gift_rewards set status='cancelled',cancelled_at=now(),updated_at=now() where id=$1`, id); err != nil { errorJSON(w, 500, "database_error"); return }
 	if err = tx.Commit(r.Context()); err != nil { errorJSON(w, 500, "database_error"); return }

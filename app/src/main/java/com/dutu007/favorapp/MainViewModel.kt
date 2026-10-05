@@ -569,6 +569,16 @@ class MainViewModel : ViewModel() {
 
     // Either partner can rename/add/remove nodes and pick how far the timeline
     // has gotten; finishing every node completes the gift.
+    // The preparer accepts the wish, lays out the nodes and drives progress;
+    // the requester watches and may withdraw the request.
+    fun acceptGift(gift: GiftItem) {
+        runBusy {
+            repository.acceptGift(gift.id)
+            _uiState.update { it.copy(message = "已同意，安排一下进度节点吧") }
+            loadGifts()
+        }
+    }
+
     fun updateGiftSteps(gift: GiftItem, labels: List<String>) {
         val cleaned = labels.map { it.trim() }.filter { it.isNotEmpty() }
         if (cleaned.isEmpty()) { _uiState.update { it.copy(error = "至少保留一个进度节点") }; return }
@@ -660,6 +670,11 @@ class MainViewModel : ViewModel() {
             raw.contains("invalid_gift_kind", ignoreCase = true) -> "请选择礼物类型"
             raw.contains("gift_already_active", ignoreCase = true) -> "你已经有一份礼物在进行中，完成后再兑换下一份"
             raw.contains("gift_already_finished", ignoreCase = true) -> "这份礼物已经完成或取消了"
+            raw.contains("gift_already_handled", ignoreCase = true) -> "这份心愿已经处理过了"
+            raw.contains("gift_accept_by_giver_only", ignoreCase = true) -> "只能由准备礼物的一方同意"
+            raw.contains("gift_edit_by_giver_only", ignoreCase = true) -> "进度由准备礼物的一方编辑哦"
+            raw.contains("gift_not_accepted", ignoreCase = true) -> "先同意这份心愿，再安排进度"
+            raw.contains("gift_no_steps", ignoreCase = true) -> "先编辑进度节点，再调整进度"
             raw.contains("cannot_cancel_other_gift", ignoreCase = true) -> "只能取消自己兑换的礼物"
             raw.contains("gift_steps_invalid", ignoreCase = true) -> "进度节点需为 1-8 个，每个最多 12 个字"
             raw.contains("gift_step_out_of_range", ignoreCase = true) -> "礼物进度刚刚变了，刷新后再试"

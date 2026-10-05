@@ -79,6 +79,7 @@ class FavorRepository(context: Context) {
     }
     suspend fun setGiftGoal(target: Int) { client.put("$baseUrl/api/v1/gifts/goal") { auth(); json(GiftGoalRequest(target)) }.check() }
     suspend fun createGift(title: String, kind: String, note: String?) { client.post("$baseUrl/api/v1/gifts") { auth(); json(GiftCreateRequest(title, kind, note)) }.check() }
+    suspend fun acceptGift(id: String) { client.post("$baseUrl/api/v1/gifts/$id/accept") { auth() }.check() }
     suspend fun updateGiftSteps(id: String, labels: List<String>) { client.put("$baseUrl/api/v1/gifts/$id/steps") { auth(); json(GiftStepsRequest(labels)) }.check() }
     suspend fun setGiftProgress(id: String, currentStep: Int) { client.post("$baseUrl/api/v1/gifts/$id/progress") { auth(); json(GiftProgressRequest(currentStep)) }.check() }
     suspend fun cancelGift(id: String) { client.post("$baseUrl/api/v1/gifts/$id/status") { auth(); json(GiftStatusRequest("cancelled")) }.check() }

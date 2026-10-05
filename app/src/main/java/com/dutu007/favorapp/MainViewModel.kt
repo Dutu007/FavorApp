@@ -549,7 +549,7 @@ class MainViewModel : ViewModel() {
         }
         runBusy {
             repository.setGiftGoal(target)
-            _uiState.update { it.copy(giftGoalDraft = "", message = "阶段性目标已更新") }
+            _uiState.update { it.copy(giftGoalDraft = "", message = "TA 的目标已更新") }
             loadGifts()
         }
     }
@@ -654,7 +654,7 @@ class MainViewModel : ViewModel() {
             raw.contains("cannot_respond_own_request", ignoreCase = true) -> "不能处理自己发起的请求"
             raw.contains("note_too_long", ignoreCase = true) -> "备注最多 200 个字"
             raw.contains("score_below_goal", ignoreCase = true) -> "分数还没达到目标，继续加油"
-            raw.contains("goal_not_set", ignoreCase = true) -> "请先设置一个阶段性目标"
+            raw.contains("goal_not_set", ignoreCase = true) -> "对方还没给你设置目标，提醒 TA 一下吧"
             raw.contains("invalid_gift_goal", ignoreCase = true) -> "目标分数需为 1-1000000 的整数"
             raw.contains("invalid_gift_title", ignoreCase = true) -> "请填写礼物名称（最多 40 个字）"
             raw.contains("invalid_gift_kind", ignoreCase = true) -> "请选择礼物类型"

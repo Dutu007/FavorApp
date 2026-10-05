@@ -403,15 +403,16 @@ func (s *server) loadGifts(ctx context.Context, cid uuid.UUID) []giftJSON {
 	return out
 }
 
-// Each partner keeps their own goal; the upsert is keyed on (couple_id, user_id).
+// The goal for a partner is set BY the other side: you decide how many points
+// your partner needs before they can ask you for a gift.
 func (s *server) setGiftGoal(w http.ResponseWriter, r *http.Request) {
 	var req giftGoalRequest
 	if !decodeJSON(w, r, &req) { return }
 	if req.TargetScore < 1 || req.TargetScore > 1000000 { errorJSON(w, 400, "invalid_gift_goal"); return }
 	uid := userID(r)
-	cid, err := s.coupleID(r)
-	if err != nil { errorJSON(w, 409, "not_matched"); return }
-	if _, err := s.db.Exec(r.Context(), `insert into gift_goals(couple_id,user_id,target_score,updated_by) values($1,$2,$3,$2) on conflict (couple_id,user_id) do update set target_score=$3,updated_by=$2,updated_at=now()`, cid, uid, req.TargetScore); err != nil { errorJSON(w, 500, "database_error"); return }
+	var cid, partner uuid.UUID
+	if err := s.db.QueryRow(r.Context(), `select id,case when member_a=$1 then member_b else member_a end from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &partner); err != nil { errorJSON(w, 409, "not_matched"); return }
+	if _, err := s.db.Exec(r.Context(), `insert into gift_goals(couple_id,user_id,target_score,updated_by) values($1,$2,$3,$4) on conflict (couple_id,user_id) do update set target_score=$3,updated_by=$4,updated_at=now()`, cid, partner, req.TargetScore, uid); err != nil { errorJSON(w, 500, "database_error"); return }
 	writeJSON(w, 200, map[string]int{"target_score": req.TargetScore})
 }
 

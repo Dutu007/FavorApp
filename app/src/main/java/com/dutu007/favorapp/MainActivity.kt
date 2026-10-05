@@ -895,22 +895,15 @@ private fun partnerAwareName(snapshot: CoupleSnapshot, name: String): String =
 private fun GiftGoalCard(state: AppUiState, viewModel: MainViewModel) {
     val snapshot = state.snapshot ?: return
     val goals = state.gifts?.goals.orEmpty()
-    val myGoal = goals.firstOrNull { it.userId == snapshot.currentUserId }?.targetScore
+    val partnerName = snapshot.partnerNickname.ifBlank { snapshot.partnerName }
     var showEditor by rememberSaveable { mutableStateOf(false) }
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
         Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("阶段性目标", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text("每人有自己的目标，达到后就能兑换心意礼物", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                }
-                TextButton(onClick = { viewModel.setGiftGoalDraft(myGoal?.toString() ?: ""); showEditor = true }, enabled = !state.busy) {
-                    Text(if (myGoal == null) "设我的目标" else "改我的")
-                }
-            }
+            Text("阶段性目标", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            Text("目标由对方为你设置，达到后就能向 TA 兑换心意礼物", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
             snapshot.cards.forEach { card ->
                 val isMe = card.userId == snapshot.currentUserId
-                val name = if (isMe) snapshot.currentUserName else snapshot.partnerNickname.ifBlank { snapshot.partnerName }
+                val name = if (isMe) snapshot.currentUserName else partnerName
                 val goal = goals.firstOrNull { it.userId == card.userId }?.targetScore
                 val reached = goal != null && card.score >= goal
                 Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
@@ -922,6 +915,13 @@ private fun GiftGoalCard(state: AppUiState, viewModel: MainViewModel) {
                             color = if (reached) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
                             fontWeight = if (reached) FontWeight.Bold else null,
                         )
+                        if (!isMe) {
+                            TextButton(
+                                onClick = { viewModel.setGiftGoalDraft(goal?.toString() ?: ""); showEditor = true },
+                                enabled = !state.busy,
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) { Text(if (goal == null) "设目标" else "修改") }
+                        }
                     }
                     Spacer(Modifier.height(5.dp))
                     LinearProgressIndicator(
@@ -937,10 +937,10 @@ private fun GiftGoalCard(state: AppUiState, viewModel: MainViewModel) {
         AlertDialog(
             onDismissRequest = { showEditor = false },
             shape = RoundedCornerShape(26.dp),
-            title = { Text("我的阶段性目标", fontWeight = FontWeight.Bold) },
+            title = { Text("给 $partnerName 的目标", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    Text("只影响你自己：你的分数达到目标后就可以兑换礼物，随时可调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("TA 的分数达到这个目标后，就可以向你要一份礼物，随时可调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(10.dp))
                     NumberField("目标分数", state.giftGoalDraft, viewModel::setGiftGoalDraft)
                 }
@@ -960,7 +960,7 @@ private fun GiftRedeemCard(state: AppUiState, viewModel: MainViewModel) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("兑换礼物", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             if (myGoal == null || myScore < myGoal) {
-                val text = if (myGoal == null) "先在上方设置你自己的阶段性目标吧。" else "再攒 ${myGoal - myScore} 分就可以兑换礼物啦，继续加油！"
+                val text = if (myGoal == null) "对方还没给你设置目标，提醒 TA 一下吧。" else "再攒 ${myGoal - myScore} 分就可以兑换礼物啦，继续加油！"
                 Text(text, color = MaterialTheme.colorScheme.secondary)
             } else {
                 Text("达到 $myGoal 分啦，选一份想要的礼物告诉 TA 吧", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)

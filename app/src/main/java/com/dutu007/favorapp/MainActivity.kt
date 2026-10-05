@@ -127,8 +127,10 @@ private const val RECORDS_PAGE_SIZE = 50
 private const val RECORDS_SERVER_LIMIT = 200
 
 // A gift stays "active" until every timeline node is done (received) or cancelled.
+private const val GIFT_REQUESTED = "requested"
 private const val GIFT_ACTIVE = "active"
 private const val GIFT_RECEIVED = "received"
+private val GIFT_FINISHED = setOf(GIFT_RECEIVED, "cancelled")
 
 // Line-art gift icon for the bottom bar, drawn to match the text-glyph icons.
 private val GiftNavIcon: ImageVector = ImageVector.Builder(
@@ -548,6 +550,8 @@ private fun PairingCard(title: String, description: String?, content: @Composabl
 @Composable
 private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: MainViewModel) {
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showGiftHistory by rememberSaveable { mutableStateOf(false) }
+    var giftDeleteCandidate by remember { mutableStateOf<GiftItem?>(null) }
     var note by rememberSaveable { mutableStateOf("") }
     var tab by rememberSaveable { mutableStateOf(0) }
     var filter by rememberSaveable { mutableStateOf(0) }
@@ -558,6 +562,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     var visibleLimit by rememberSaveable { mutableStateOf(RECORDS_PAGE_SIZE) }
     var pendingDelta by rememberSaveable { mutableStateOf<Int?>(null) }
     var pendingNote by rememberSaveable { mutableStateOf("") }
+    BackHandler(enabled = showGiftHistory) { showGiftHistory = false }
     BackHandler(enabled = tab != 0) { tab = 0 }
     val partnerDisplay = snapshot.partnerNickname.ifBlank { snapshot.partnerName }
     val visibleEvents = snapshot.events.filter { event ->
@@ -583,6 +588,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         viewModel.refreshSnapshot(keyword = keyword, date = date)
     }
     LaunchedEffect(tab) { if (tab == 2) viewModel.loadGifts() }
+    LaunchedEffect(showGiftHistory) { if (showGiftHistory) viewModel.loadGiftHistory(true) }
     LaunchedEffect(tab, keyword, date, filter, direction) { visibleLimit = RECORDS_PAGE_SIZE }
     AppBackground {
         Scaffold(
@@ -724,15 +730,23 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                     } else {
                         item { GiftGoalCard(state, viewModel) }
                         val gifts = state.gifts?.gifts.orEmpty()
-                        val mine = gifts.firstOrNull { it.status == GIFT_ACTIVE && it.requesterId == snapshot.currentUserId }
-                        val theirs = gifts.firstOrNull { it.status == GIFT_ACTIVE && it.requesterId != snapshot.currentUserId }
+                        // Waiting-for-acceptance wishes count as in flight too:
+                        // only received/cancelled gifts are history.
+                        val mine = gifts.firstOrNull { it.requesterId == snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
+                        val theirs = gifts.firstOrNull { it.requesterId != snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
                         if (mine == null) item { GiftRedeemCard(state, viewModel) }
                         if (mine != null) item(key = mine.id) { GiftTrackingCard(mine, state, viewModel) }
                         if (theirs != null) item(key = theirs.id) { GiftTrackingCard(theirs, state, viewModel) }
-                        val history = gifts.filter { it.status != GIFT_ACTIVE }
+                        val history = gifts.filter { it.status in GIFT_FINISHED }
+                        val historyTotal = state.gifts?.historyTotal ?: history.size
                         if (history.isNotEmpty()) {
                             item { Text("过往礼物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-                            items(history, key = { it.id }) { GiftHistoryCard(it) }
+                            items(history.take(3), key = { it.id }) { GiftHistoryCard(it, onClick = { giftDeleteCandidate = it }) }
+                            if (historyTotal > 3) {
+                                item {
+                                    TextButton(onClick = { showGiftHistory = true }, modifier = Modifier.fillMaxWidth()) { Text("查看完整历史 ›") }
+                                }
+                            }
                         }
                     }
                 }
@@ -740,6 +754,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         }
     }
     if (showSettings) SettingsScreen(state, viewModel) { showSettings = false }
+    if (showGiftHistory) GiftHistoryScreen(state, viewModel) { showGiftHistory = false }
     if (showDatePicker) {
         val pickerState = rememberDatePickerState(initialSelectedDateMillis = parsePickerDate(date))
         DatePickerDialog(
@@ -755,6 +770,10 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             DatePicker(state = pickerState)
         }
     }
+    GiftDeleteFlow(giftDeleteCandidate, onDismiss = { giftDeleteCandidate = null }, onConfirmDelete = { gift ->
+        giftDeleteCandidate = null
+        viewModel.deleteGift(gift)
+    })
     pendingDelta?.let { delta ->
         ScoreConfirmDialog(partnerDisplay, delta, pendingNote, state.busy, onDismiss = { pendingDelta = null }) {
             pendingDelta = null
@@ -966,10 +985,6 @@ private fun GiftRedeemCard(state: AppUiState, viewModel: MainViewModel) {
             } else {
                 Text("达到 $myGoal 分啦，选一份想要的礼物告诉 TA 吧", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                 AppTextField(state.giftTitle, viewModel::setGiftTitle, "想要什么礼物", "🎁")
-                FilterChipsRow(listOf("手工制品", "成品"), if (state.giftKind == "handmade") 0 else 1) { index ->
-                    viewModel.setGiftKind(if (index == 0) "handmade" else "ready")
-                }
-                Text("手工制品由对方亲手制作，成品直接买好寄出。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 AppTextField(state.giftNote, viewModel::setGiftNote, "备注（可选）", "✎")
                 PrimaryAction("提交兑换", state.busy, viewModel::submitGiftRedemption)
                 Text("提交后等对方同意，TA 会安排准备进度。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -984,16 +999,15 @@ private fun GiftTrackingCard(gift: GiftItem, state: AppUiState, viewModel: MainV
     val mine = gift.requesterId == snapshot.currentUserId
     val requesterName = partnerAwareName(snapshot, gift.requesterName)
     val giverName = if (mine) snapshot.partnerNickname.ifBlank { snapshot.partnerName } else snapshot.currentUserName
-    val kindLabel = if (gift.kind == "handmade") "手工制品" else "成品"
     var showProgressDialog by remember { mutableStateOf(false) }
     var showStepsEditor by remember { mutableStateOf(false) }
     val roleText = when {
         gift.status == "cancelled" -> if (mine) "我的心愿 · 已取消" else "${requesterName}的心愿 · 已取消"
         gift.status == GIFT_RECEIVED -> if (mine) "我的心愿 · 已完成" else "${requesterName}的心愿 · 已完成"
-        gift.status == "requested" -> if (mine) "我的心愿 · 等待 $giverName 同意" else "${requesterName}的心愿 · 等你同意 · $kindLabel"
-        gift.steps.isEmpty() -> if (mine) "我的心愿 · $giverName 已同意，正在安排进度" else "${requesterName}的心愿 · 我来准备 · $kindLabel"
-        mine -> "我的心愿 · $giverName 正在准备 · $kindLabel"
-        else -> "${requesterName}的心愿 · 我来准备 · $kindLabel"
+        gift.status == GIFT_REQUESTED -> if (mine) "我的心愿 · 等待 $giverName 同意" else "${requesterName}的心愿 · 等你同意"
+        gift.steps.isEmpty() -> if (mine) "我的心愿 · $giverName 已同意，正在安排进度" else "${requesterName}的心愿 · 我来准备"
+        mine -> "我的心愿 · $giverName 正在准备"
+        else -> "${requesterName}的心愿 · 我来准备"
     }
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1073,8 +1087,7 @@ private fun GiftTrackingCard(gift: GiftItem, state: AppUiState, viewModel: MainV
     if (showStepsEditor) {
         val labels = remember(gift.id, gift.steps) {
             mutableStateListOf<String>().apply {
-                val defaults = if (gift.kind == "handmade") listOf("已采购材料", "制作中", "已发货", "已收到礼物") else listOf("已下单", "已发货", "已收到礼物")
-                addAll(gift.steps.map { it.label }.ifEmpty { defaults })
+                addAll(gift.steps.map { it.label }.ifEmpty { listOf("已采购/已下单", "准备中", "已发货", "已收到礼物") })
             }
         }
         AlertDialog(
@@ -1166,9 +1179,9 @@ private fun GiftStepper(gift: GiftItem) {
 }
 
 @Composable
-private fun GiftHistoryCard(gift: GiftItem) {
+private fun GiftHistoryCard(gift: GiftItem, onClick: (() -> Unit)? = null) {
     val received = gift.status == GIFT_RECEIVED
-    ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.9f))) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth().let { if (onClick != null) it.clickable(onClick = onClick) else it }, shape = RoundedCornerShape(18.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.9f))) {
         Column(Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(if (received) "🎉" else "🎁", modifier = Modifier.padding(end = 8.dp))
@@ -1179,10 +1192,87 @@ private fun GiftHistoryCard(gift: GiftItem) {
                     color = if (received) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.Bold,
                 )
+                if (onClick != null) Text(" ›", fontSize = 20.sp, color = MaterialTheme.colorScheme.secondary)
             }
             val at = gift.steps.lastOrNull()?.at ?: gift.cancelledAt ?: gift.createdAt
             Text("${gift.requesterName}的心愿 · ${formatTime(at)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 6.dp))
         }
+    }
+}
+
+@Composable
+private fun GiftHistoryScreen(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+    var deleteCandidate by remember { mutableStateOf<GiftItem?>(null) }
+    SettingsPageScaffold("礼物历史", onBack) { padding ->
+        LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item { Notice(state, viewModel::clearNotice) }
+            if (state.giftHistory.isEmpty()) {
+                item {
+                    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = Color.White.copy(alpha = 0.74f)) {
+                        Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("🎁", style = MaterialTheme.typography.headlineLarge)
+                            Spacer(Modifier.height(6.dp))
+                            Text("还没有完成过的礼物", fontWeight = FontWeight.Bold)
+                            Text("完成或取消的心愿会记录在这里", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            } else {
+                items(state.giftHistory, key = { it.id }) { GiftHistoryCard(it, onClick = { deleteCandidate = it }) }
+                if (state.giftHistory.size < state.giftHistoryTotal) {
+                    item {
+                        OutlinedButton(onClick = { viewModel.loadGiftHistory(false) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                            Text("加载更多（还有 ${state.giftHistoryTotal - state.giftHistory.size} 条）")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    GiftDeleteFlow(deleteCandidate, onDismiss = { deleteCandidate = null }, onConfirmDelete = { gift ->
+        deleteCandidate = null
+        viewModel.deleteGift(gift)
+    })
+}
+
+// Two-step delete: pick the record, then confirm the irreversible removal.
+@Composable
+private fun GiftDeleteFlow(candidate: GiftItem?, onDismiss: () -> Unit, onConfirmDelete: (GiftItem) -> Unit) {
+    var confirming by remember(candidate) { mutableStateOf(false) }
+    if (candidate == null) return
+    if (!confirming) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("删除记录", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("🎁 ${candidate.title}", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        (if (candidate.status == GIFT_RECEIVED) "已完成" else "已取消") + " · " + formatTime(candidate.steps.lastOrNull()?.at ?: candidate.cancelledAt ?: candidate.createdAt),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text("要删除这条礼物记录吗？")
+                }
+            },
+            confirmButton = {
+                Button(onClick = { confirming = true }, shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("删除记录") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        )
+    } else {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("确认删除", fontWeight = FontWeight.Bold) },
+            text = { Text("删除后你们双方都看不到这条记录，且无法恢复。真的要删除吗？") },
+            confirmButton = {
+                Button(onClick = { onConfirmDelete(candidate) }, shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("确认删除") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("再想想") } },
+        )
     }
 }
 

@@ -53,7 +53,7 @@ type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `
 type scoreRequest struct { Delta int `json:"delta"`; Note string `json:"note"`; IdempotencyKey string `json:"idempotency_key"` }
 type nicknameRequest struct { Nickname string `json:"nickname"` }
 type giftGoalRequest struct { TargetScore int `json:"target_score"` }
-type giftCreateRequest struct { Title string `json:"title"`; Kind string `json:"kind"`; Note string `json:"note"` }
+type giftCreateRequest struct { Title string `json:"title"`; Note string `json:"note"` }
 type giftStepsRequest struct { Steps []string `json:"steps"` }
 type giftProgressRequest struct { CurrentStep int `json:"current_step"` }
 type giftStatusRequest struct { Status string `json:"status"` }
@@ -100,12 +100,14 @@ func main() {
 	mux.Handle("DELETE /api/v1/me/avatar", s.auth(http.HandlerFunc(s.deleteAvatar)))
 	mux.Handle("GET /api/v1/users/{id}/avatar", s.auth(http.HandlerFunc(s.avatar)))
 	mux.Handle("GET /api/v1/gifts", s.auth(http.HandlerFunc(s.gifts)))
+	mux.Handle("GET /api/v1/gifts/history", s.auth(http.HandlerFunc(s.giftHistory)))
 	mux.Handle("PUT /api/v1/gifts/goal", s.auth(http.HandlerFunc(s.setGiftGoal)))
 	mux.Handle("POST /api/v1/gifts", s.auth(http.HandlerFunc(s.createGift)))
 	mux.Handle("POST /api/v1/gifts/{id}/accept", s.auth(http.HandlerFunc(s.acceptGift)))
 	mux.Handle("PUT /api/v1/gifts/{id}/steps", s.auth(http.HandlerFunc(s.updateGiftSteps)))
 	mux.Handle("POST /api/v1/gifts/{id}/progress", s.auth(http.HandlerFunc(s.setGiftProgress)))
 	mux.Handle("POST /api/v1/gifts/{id}/status", s.auth(http.HandlerFunc(s.cancelGift)))
+	mux.Handle("DELETE /api/v1/gifts/{id}", s.auth(http.HandlerFunc(s.deleteGift)))
 	mux.Handle("GET /api/v1/app/latest", s.auth(http.HandlerFunc(s.latestApp)))
 	mux.Handle("GET /api/v1/app/apk", s.auth(http.HandlerFunc(s.appAPK)))
 
@@ -362,8 +364,10 @@ type giftGoalJSON struct { UserID string `json:"user_id"`; TargetScore int `json
 type giftStepJSON struct { Label string `json:"label"`; At *time.Time `json:"at"` }
 
 type giftJSON struct {
+	// Kind is always empty: the field is retired, but older app builds still
+	// expect it in the payload, so it is sent for compatibility.
 	ID string `json:"id"`; RequesterID string `json:"requester_id"`; RequesterName string `json:"requester_name"`
-	Title string `json:"title"`; Kind string `json:"kind"`; Note *string `json:"note"`; Status string `json:"status"`
+	Kind string `json:"kind"`; Title string `json:"title"`; Note *string `json:"note"`; Status string `json:"status"`
 	CurrentStep int `json:"current_step"`; Steps []giftStepJSON `json:"steps"`
 	CancelledAt *time.Time `json:"cancelled_at"`; CreatedAt time.Time `json:"created_at"`
 }
@@ -381,11 +385,6 @@ func encodeGiftSteps(steps []giftStepJSON) string {
 	return string(data)
 }
 
-func defaultGiftSteps(kind string) []string {
-	if kind == "handmade" { return []string{"已采购材料", "制作中", "已发货", "已收到礼物"} }
-	return []string{"已下单", "已发货", "已收到礼物"}
-}
-
 func (s *server) coupleID(r *http.Request) (uuid.UUID, error) {
 	var cid uuid.UUID
 	err := s.db.QueryRow(r.Context(), `select id from couples where status='active' and (member_a=$1 or member_b=$1)`, userID(r)).Scan(&cid)
@@ -394,7 +393,7 @@ func (s *server) coupleID(r *http.Request) (uuid.UUID, error) {
 
 func (s *server) gifts(w http.ResponseWriter, r *http.Request) {
 	cid, err := s.coupleID(r)
-	if err != nil { writeJSON(w, 200, map[string]any{"goals": []giftGoalJSON{}, "gifts": []giftJSON{}}); return }
+	if err != nil { writeJSON(w, 200, map[string]any{"goals": []giftGoalJSON{}, "gifts": []giftJSON{}, "history_total": 0}); return }
 	goals := []giftGoalJSON{}
 	goalRows, err := s.db.Query(r.Context(), `select user_id,target_score from gift_goals where couple_id=$1`, cid)
 	if err == nil {
@@ -404,27 +403,56 @@ func (s *server) gifts(w http.ResponseWriter, r *http.Request) {
 			if goalRows.Scan(&uid, &target) == nil { goals = append(goals, giftGoalJSON{uid.String(), target}) }
 		}
 	}
-	writeJSON(w, 200, map[string]any{"goals": goals, "gifts": s.loadGifts(r.Context(), cid)})
+	var historyTotal int
+	_ = s.db.QueryRow(r.Context(), `select count(*) from gift_rewards where couple_id=$1 and status in ('received','cancelled')`, cid).Scan(&historyTotal)
+	writeJSON(w, 200, map[string]any{"goals": goals, "gifts": s.loadGifts(r.Context(), cid), "history_total": historyTotal})
 }
 
 func (s *server) loadGifts(ctx context.Context, cid uuid.UUID) []giftJSON {
-	rows, err := s.db.Query(ctx, `select g.id,g.requester_id,coalesce(nullif(u.display_name,''),u.username),g.title,g.kind,g.note,g.status,g.current_step,g.steps,g.cancelled_at,g.created_at from gift_rewards g join app_users u on u.id=g.requester_id where g.couple_id=$1 order by g.created_at desc limit 100`, cid)
+	rows, err := s.db.Query(ctx, `select g.id,g.requester_id,coalesce(nullif(u.display_name,''),u.username),g.title,g.note,g.status,g.current_step,g.steps,g.cancelled_at,g.created_at from gift_rewards g join app_users u on u.id=g.requester_id where g.couple_id=$1 order by g.created_at desc limit 100`, cid)
 	if err != nil { return []giftJSON{} }
 	defer rows.Close()
 	out := []giftJSON{}
 	for rows.Next() {
 		var id, requester uuid.UUID
-		var name, title, kind, status string
+		var name, title, status string
 		var note *string
 		var currentStep int
 		var stepsRaw []byte
 		var cancelledAt *time.Time
 		var createdAt time.Time
-		if rows.Scan(&id, &requester, &name, &title, &kind, &note, &status, &currentStep, &stepsRaw, &cancelledAt, &createdAt) == nil {
-			out = append(out, giftJSON{id.String(), requester.String(), name, title, kind, note, status, currentStep, decodeGiftSteps(stepsRaw), cancelledAt, createdAt})
+		if rows.Scan(&id, &requester, &name, &title, &note, &status, &currentStep, &stepsRaw, &cancelledAt, &createdAt) == nil {
+			out = append(out, giftJSON{id.String(), requester.String(), name, "", title, note, status, currentStep, decodeGiftSteps(stepsRaw), cancelledAt, createdAt})
 		}
 	}
 	return out
+}
+
+// Finished gifts only, newest first, served in pages for the history screen.
+func (s *server) giftHistory(w http.ResponseWriter, r *http.Request) {
+	cid, err := s.coupleID(r)
+	if err != nil { writeJSON(w, 200, map[string]any{"total": 0, "gifts": []giftJSON{}}); return }
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset")); if offset < 0 { offset = 0 }
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit")); if limit < 1 || limit > 100 { limit = 20 }
+	var total int
+	if err := s.db.QueryRow(r.Context(), `select count(*) from gift_rewards where couple_id=$1 and status in ('received','cancelled')`, cid).Scan(&total); err != nil { errorJSON(w, 500, "database_error"); return }
+	rows, err := s.db.Query(r.Context(), `select g.id,g.requester_id,coalesce(nullif(u.display_name,''),u.username),g.title,g.note,g.status,g.current_step,g.steps,g.cancelled_at,g.created_at from gift_rewards g join app_users u on u.id=g.requester_id where g.couple_id=$1 and g.status in ('received','cancelled') order by g.created_at desc offset $2 limit $3`, cid, offset, limit)
+	if err != nil { errorJSON(w, 500, "database_error"); return }
+	defer rows.Close()
+	gifts := []giftJSON{}
+	for rows.Next() {
+		var id, requester uuid.UUID
+		var name, title, status string
+		var note *string
+		var currentStep int
+		var stepsRaw []byte
+		var cancelledAt *time.Time
+		var createdAt time.Time
+		if rows.Scan(&id, &requester, &name, &title, &note, &status, &currentStep, &stepsRaw, &cancelledAt, &createdAt) == nil {
+			gifts = append(gifts, giftJSON{id.String(), requester.String(), name, "", title, note, status, currentStep, decodeGiftSteps(stepsRaw), cancelledAt, createdAt})
+		}
+	}
+	writeJSON(w, 200, map[string]any{"total": total, "gifts": gifts})
 }
 
 // The goal for a partner is set BY the other side: you decide how many points
@@ -445,7 +473,6 @@ func (s *server) createGift(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) { return }
 	title := strings.TrimSpace(req.Title)
 	if title == "" || len([]rune(title)) > 40 { errorJSON(w, 400, "invalid_gift_title"); return }
-	if req.Kind != "handmade" && req.Kind != "ready" { errorJSON(w, 400, "invalid_gift_kind"); return }
 	if len([]rune(req.Note)) > 200 { errorJSON(w, 400, "note_too_long"); return }
 	uid := userID(r)
 	cid, err := s.coupleID(r)
@@ -458,7 +485,7 @@ func (s *server) createGift(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New()
 	// Nodes stay empty until the partner accepts and lays out the plan, so the
 	// requester only ever sees progress the preparer has committed to.
-	if _, err := s.db.Exec(r.Context(), `insert into gift_rewards(id,couple_id,requester_id,title,kind,note,steps,current_step,status) values($1,$2,$3,$4,$5,nullif(trim($6),''),'[]'::jsonb,0,'requested')`, id, cid, uid, title, req.Kind, req.Note); err != nil {
+	if _, err := s.db.Exec(r.Context(), `insert into gift_rewards(id,couple_id,requester_id,title,note,steps,current_step,status) values($1,$2,$3,$4,nullif(trim($5),''),'[]'::jsonb,0,'requested')`, id, cid, uid, title, req.Note); err != nil {
 		// The partial unique index keeps a second concurrent redemption out.
 		if strings.Contains(err.Error(), "duplicate") { errorJSON(w, 409, "gift_already_active") } else { errorJSON(w, 500, "database_error") }
 		return
@@ -585,6 +612,22 @@ func (s *server) cancelGift(w http.ResponseWriter, r *http.Request) {
 	if _, err = tx.Exec(r.Context(), `update gift_rewards set status='cancelled',cancelled_at=now(),updated_at=now() where id=$1`, id); err != nil { errorJSON(w, 500, "database_error"); return }
 	if err = tx.Commit(r.Context()); err != nil { errorJSON(w, 500, "database_error"); return }
 	writeJSON(w, 200, map[string]string{"status": "cancelled"})
+}
+
+// Either partner may delete a finished record, after confirming in the app.
+func (s *server) deleteGift(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil { errorJSON(w, 400, "invalid_request"); return }
+	uid := userID(r)
+	var cid uuid.UUID
+	if err := s.db.QueryRow(r.Context(), `select couple_id from gift_rewards where id=$1`, id).Scan(&cid); err != nil { errorJSON(w, 404, "gift_not_found"); return }
+	var member bool
+	_ = s.db.QueryRow(r.Context(), `select exists(select 1 from couples where id=$1 and status='active' and (member_a=$2 or member_b=$2))`, cid, uid).Scan(&member)
+	if !member { errorJSON(w, 403, "forbidden"); return }
+	tag, err := s.db.Exec(r.Context(), `delete from gift_rewards where id=$1 and status in ('received','cancelled')`, id)
+	if err != nil { errorJSON(w, 500, "database_error"); return }
+	if tag.RowsAffected() == 0 { errorJSON(w, 409, "gift_delete_not_finished"); return }
+	writeJSON(w, 200, map[string]bool{"deleted": true})
 }
 func other(uid,a,b uuid.UUID)uuid.UUID{if uid==a{return b};return a};func optional(v string)*string{v=strings.TrimSpace(v);if v==""{return nil};return &v};func sha256Bytes(v string)[]byte{h:=sha256.Sum256([]byte(v));return h[:]};func tokenHash(token string)[]byte{return sha256Bytes(token)};func newSessionToken()(string,[]byte,error){raw:=make([]byte,32);if _,err:=rand.Read(raw);err!=nil{return "",nil,err};token:=base64.RawURLEncoding.EncodeToString(raw);return token,tokenHash(token),nil}
 func validateScoreRules(initial int, min, max *int, addMin, addMax, subtractMin, subtractMax int) string { if min != nil && max != nil && *min > *max { return "invalid_score_range" }; if min != nil && initial < *min || max != nil && initial > *max { return "initial_score_outside_range" }; if addMin < 1 || addMax < addMin || addMax > 100 { return "invalid_add_range" }; if subtractMin < 1 || subtractMax < subtractMin || subtractMax > 100 { return "invalid_subtract_range" }; return "" }

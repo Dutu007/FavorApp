@@ -31,6 +31,7 @@ enum class AuthMode { SIGN_IN, SIGN_UP }
 
 const val NOTE_MAX_LENGTH = 200
 const val PRESET_MAX_COUNT = 5
+const val GIFT_HISTORY_PAGE_SIZE = 20
 
 data class AppUiState(
     val loading: Boolean = true,
@@ -57,9 +58,10 @@ data class AppUiState(
     val snapshot: CoupleSnapshot? = null,
     val gifts: GiftBoard? = null,
     val giftTitle: String = "",
-    val giftKind: String = "handmade",
     val giftNote: String = "",
     val giftGoalDraft: String = "",
+    val giftHistory: List<GiftItem> = emptyList(),
+    val giftHistoryTotal: Int = 0,
     val message: String? = null,
     val error: String? = null,
     val flash: String? = null,
@@ -521,7 +523,6 @@ class MainViewModel : ViewModel() {
     // Gift rewards live on their own board: a shared score goal plus one
     // in-flight gift whose timeline both partners update by hand.
     fun setGiftTitle(value: String) = _uiState.update { it.copy(giftTitle = value) }
-    fun setGiftKind(value: String) = _uiState.update { it.copy(giftKind = value) }
     fun setGiftNote(value: String) = _uiState.update { it.copy(giftNote = value.take(NOTE_MAX_LENGTH)) }
     fun setGiftGoalDraft(value: String) = _uiState.update { it.copy(giftGoalDraft = value.filter(Char::isDigit)) }
 
@@ -561,9 +562,40 @@ class MainViewModel : ViewModel() {
         if (title.length > 40) { _uiState.update { it.copy(error = "礼物名称最多 40 个字") }; return }
         if (state.giftNote.length > NOTE_MAX_LENGTH) { _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }; return }
         runBusy {
-            repository.createGift(title, state.giftKind, state.giftNote.trim().takeIf { it.isNotEmpty() })
+            repository.createGift(title, state.giftNote.trim().takeIf { it.isNotEmpty() })
             _uiState.update { it.copy(giftTitle = "", giftNote = "", message = "兑换已提交，等待对方确认") }
             loadGifts()
+        }
+    }
+
+    // Full history screen: server-side pages of finished gifts, newest first.
+    fun loadGiftHistory(reset: Boolean) {
+        if (repository.currentUserId() == null) return
+        viewModelScope.launch {
+            try {
+                val offset = if (reset) 0 else _uiState.value.giftHistory.size
+                val page = repository.loadGiftHistory(offset, GIFT_HISTORY_PAGE_SIZE)
+                _uiState.update {
+                    val merged = if (reset) page.gifts else (it.giftHistory + page.gifts).distinctBy { g -> g.id }
+                    it.copy(giftHistory = merged, giftHistoryTotal = page.total)
+                }
+            } catch (error: Exception) {
+                if (error is ApiException && error.statusCode == 401) {
+                    repository.clearSession()
+                    resetScoreKey()
+                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                }
+            }
+        }
+    }
+
+    // Either partner may delete a finished record after confirming twice.
+    fun deleteGift(gift: GiftItem) {
+        runBusy {
+            repository.deleteGift(gift.id)
+            _uiState.update { it.copy(message = "记录已删除") }
+            loadGifts()
+            loadGiftHistory(true)
         }
     }
 
@@ -667,7 +699,7 @@ class MainViewModel : ViewModel() {
             raw.contains("goal_not_set", ignoreCase = true) -> "对方还没给你设置目标，提醒 TA 一下吧"
             raw.contains("invalid_gift_goal", ignoreCase = true) -> "目标分数需为 1-1000000 的整数"
             raw.contains("invalid_gift_title", ignoreCase = true) -> "请填写礼物名称（最多 40 个字）"
-            raw.contains("invalid_gift_kind", ignoreCase = true) -> "请选择礼物类型"
+            raw.contains("gift_delete_not_finished", ignoreCase = true) -> "进行中的礼物不能删除，先完成或取消"
             raw.contains("gift_already_active", ignoreCase = true) -> "你已经有一份礼物在进行中，完成后再兑换下一份"
             raw.contains("gift_already_finished", ignoreCase = true) -> "这份礼物已经完成或取消了"
             raw.contains("gift_already_handled", ignoreCase = true) -> "这份心愿已经处理过了"

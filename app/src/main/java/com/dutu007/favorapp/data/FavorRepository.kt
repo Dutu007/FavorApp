@@ -38,11 +38,12 @@ import java.io.File
 @Serializable private data class ErrorDto(val error: String)
 @Serializable private data class AppReleaseDto(val version_code: Int, val version_name: String, val notes: String = "", val sha256: String = "", val size: Long = 0)
 @Serializable private data class GiftStepDto(val label: String, val at: String? = null)
-@Serializable private data class GiftDto(val id: String, @SerialName("requester_id") val requesterId: String, @SerialName("requester_name") val requesterName: String, val title: String, val kind: String, val note: String? = null, val status: String, @SerialName("current_step") val currentStep: Int = 0, val steps: List<GiftStepDto> = emptyList(), @SerialName("cancelled_at") val cancelledAt: String? = null, @SerialName("created_at") val createdAt: String)
+@Serializable private data class GiftDto(val id: String, @SerialName("requester_id") val requesterId: String, @SerialName("requester_name") val requesterName: String, val title: String, val note: String? = null, val status: String, @SerialName("current_step") val currentStep: Int = 0, val steps: List<GiftStepDto> = emptyList(), @SerialName("cancelled_at") val cancelledAt: String? = null, @SerialName("created_at") val createdAt: String)
 @Serializable private data class GiftGoalDto(@SerialName("user_id") val userId: String, @SerialName("target_score") val targetScore: Int)
-@Serializable private data class GiftsResponseDto(val goals: List<GiftGoalDto> = emptyList(), val gifts: List<GiftDto> = emptyList())
+@Serializable private data class GiftsResponseDto(val goals: List<GiftGoalDto> = emptyList(), val gifts: List<GiftDto> = emptyList(), @SerialName("history_total") val historyTotal: Int = 0)
+@Serializable private data class GiftHistoryResponseDto(val total: Int = 0, val gifts: List<GiftDto> = emptyList())
 @Serializable private data class GiftGoalRequest(@SerialName("target_score") val targetScore: Int)
-@Serializable private data class GiftCreateRequest(val title: String, val kind: String, val note: String? = null)
+@Serializable private data class GiftCreateRequest(val title: String, val note: String? = null)
 @Serializable private data class GiftStepsRequest(val steps: List<String>)
 @Serializable private data class GiftProgressRequest(@SerialName("current_step") val currentStep: Int)
 @Serializable private data class GiftStatusRequest(val status: String)
@@ -74,11 +75,17 @@ class FavorRepository(context: Context) {
         val dto = client.get("$baseUrl/api/v1/gifts") { auth() }.bodyChecked<GiftsResponseDto>()
         return GiftBoard(
             dto.goals.map { GiftGoalEntry(it.userId, it.targetScore) },
-            dto.gifts.map { GiftItem(it.id, it.requesterId, it.requesterName, it.title, it.kind, it.note, it.status, it.currentStep, it.steps.map { s -> GiftStep(s.label, s.at) }, it.cancelledAt, it.createdAt) },
+            dto.gifts.map { it.toItem() },
+            dto.historyTotal,
         )
     }
+    suspend fun loadGiftHistory(offset: Int, limit: Int): GiftHistoryPage {
+        val dto = client.get("$baseUrl/api/v1/gifts/history") { auth(); url { parameters.append("offset", offset.toString()); parameters.append("limit", limit.toString()) } }.bodyChecked<GiftHistoryResponseDto>()
+        return GiftHistoryPage(dto.total, dto.gifts.map { it.toItem() })
+    }
+    suspend fun deleteGift(id: String) { client.delete("$baseUrl/api/v1/gifts/$id") { auth() }.check() }
     suspend fun setGiftGoal(target: Int) { client.put("$baseUrl/api/v1/gifts/goal") { auth(); json(GiftGoalRequest(target)) }.check() }
-    suspend fun createGift(title: String, kind: String, note: String?) { client.post("$baseUrl/api/v1/gifts") { auth(); json(GiftCreateRequest(title, kind, note)) }.check() }
+    suspend fun createGift(title: String, note: String?) { client.post("$baseUrl/api/v1/gifts") { auth(); json(GiftCreateRequest(title, note)) }.check() }
     suspend fun acceptGift(id: String) { client.post("$baseUrl/api/v1/gifts/$id/accept") { auth() }.check() }
     suspend fun updateGiftSteps(id: String, labels: List<String>) { client.put("$baseUrl/api/v1/gifts/$id/steps") { auth(); json(GiftStepsRequest(labels)) }.check() }
     suspend fun setGiftProgress(id: String, currentStep: Int) { client.post("$baseUrl/api/v1/gifts/$id/progress") { auth(); json(GiftProgressRequest(currentStep)) }.check() }
@@ -106,6 +113,7 @@ class FavorRepository(context: Context) {
     suspend fun loadSnapshot(from: String? = null, to: String? = null, keyword: String? = null): CoupleSnapshot? { val response = client.get("$baseUrl/api/v1/couple") { auth(); url { from?.takeIf { it.isNotBlank() }?.let { parameters.append("from", it) }; to?.takeIf { it.isNotBlank() }?.let { parameters.append("to", it) }; keyword?.takeIf { it.isNotBlank() }?.let { parameters.append("keyword", it) } } }; response.check(); val raw = response.bodyAsText().trim(); if (raw == "null") return null; return json.decodeFromString<CoupleDto>(raw).toSnapshot() }
 
     private fun saveAuth(auth: AuthResponse) { preferences.edit().putString("token", auth.token).putString("user_id", auth.user.id).apply() }
+    private fun GiftDto.toItem() = GiftItem(id, requesterId, requesterName, title, note, status, currentStep, steps.map { GiftStep(it.label, it.at) }, cancelledAt, createdAt)
     private fun HttpRequestBuilder.auth() { header("Authorization", "Bearer ${preferences.getString("token", "")}") }
     private fun HttpRequestBuilder.json(value: Any) { contentType(ContentType.Application.Json); setBody(value) }
     private suspend inline fun <reified T> HttpResponse.bodyChecked(): T { check(); return body() }

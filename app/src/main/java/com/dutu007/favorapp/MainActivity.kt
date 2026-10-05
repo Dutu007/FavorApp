@@ -96,6 +96,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dutu007.favorapp.data.CoupleSnapshot
+import com.dutu007.favorapp.data.GiftItem
 import com.dutu007.favorapp.data.PendingRuleRequest
 import com.dutu007.favorapp.data.ScoreEventItem
 import com.dutu007.favorapp.data.ScorePreset
@@ -115,6 +116,11 @@ private val PinkGradient = Brush.verticalGradient(
 // Server caps a query at 200 events; render them in pages of this size.
 private const val RECORDS_PAGE_SIZE = 50
 private const val RECORDS_SERVER_LIMIT = 200
+
+// Gift statuses that still sit on the tracking timeline (not yet received/cancelled).
+private val ACTIVE_GIFT_STATUSES = setOf("requested", "confirmed", "preparing", "shipped")
+
+private data class GiftStep(val label: String, val at: String?, val done: Boolean, val isCancel: Boolean = false)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -498,7 +504,7 @@ private fun PairingCard(title: String, description: String?, content: @Composabl
 private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: MainViewModel) {
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var note by rememberSaveable { mutableStateOf("") }
-    var records by rememberSaveable { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableStateOf(0) }
     var filter by rememberSaveable { mutableStateOf(0) }
     var direction by rememberSaveable { mutableStateOf(0) }
     var keyword by rememberSaveable { mutableStateOf("") }
@@ -507,7 +513,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     var visibleLimit by rememberSaveable { mutableStateOf(RECORDS_PAGE_SIZE) }
     var pendingDelta by rememberSaveable { mutableStateOf<Int?>(null) }
     var pendingNote by rememberSaveable { mutableStateOf("") }
-    BackHandler(enabled = records) { records = false }
+    BackHandler(enabled = tab != 0) { tab = 0 }
     val partnerDisplay = snapshot.partnerNickname.ifBlank { snapshot.partnerName }
     val visibleEvents = snapshot.events.filter { event ->
         val mine = if (event.actorId.isNotBlank()) event.actorId == snapshot.currentUserId else event.actorName == snapshot.currentUserName
@@ -516,33 +522,38 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         directionOk && changeOk
     }
     val shownEvents = visibleEvents.take(visibleLimit)
-    LaunchedEffect(records, keyword, date) {
-        if (!records) {
-            // Returning home: drop the records-tab filters so the recent-records card is complete.
-            if (keyword.isNotBlank() || date.isNotBlank()) {
-                kotlinx.coroutines.delay(400)
-                viewModel.refreshSnapshot()
+    LaunchedEffect(tab, keyword, date) {
+        when (tab) {
+            2 -> return@LaunchedEffect
+            0 -> {
+                // Returning home: drop the records-tab filters so the recent-records card is complete.
+                if (keyword.isNotBlank() || date.isNotBlank()) {
+                    kotlinx.coroutines.delay(400)
+                    viewModel.refreshSnapshot()
+                }
+                return@LaunchedEffect
             }
-            return@LaunchedEffect
         }
         kotlinx.coroutines.delay(500)
         viewModel.refreshSnapshot(keyword = keyword, date = date)
     }
-    LaunchedEffect(records, keyword, date, filter, direction) { visibleLimit = RECORDS_PAGE_SIZE }
+    LaunchedEffect(tab) { if (tab == 2) viewModel.loadGifts() }
+    LaunchedEffect(tab, keyword, date, filter, direction) { visibleLimit = RECORDS_PAGE_SIZE }
     AppBackground {
         Scaffold(
             containerColor = Color.Transparent,
             bottomBar = {
                 NavigationBar(modifier = Modifier.height(60.dp), containerColor = Color.White, tonalElevation = 0.dp) {
-                    NavigationBarItem(selected = !records, onClick = { records = false }, icon = { Text("♡", fontSize = 24.sp) })
-                    NavigationBarItem(selected = records, onClick = { records = true }, icon = { Text("☰", fontSize = 24.sp) })
+                    NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("♡", fontSize = 24.sp) })
+                    NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("☰", fontSize = 24.sp) })
+                    NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Text("🎁", fontSize = 20.sp) })
                 }
             },
             topBar = {
                 TopAppBar(
-                    title = { Text(if (records) "好感度记录" else "我们的空间", fontWeight = FontWeight.Bold) },
+                    title = { Text(when (tab) { 1 -> "好感度记录"; 2 -> "阶段性奖励"; else -> "我们的空间" }, fontWeight = FontWeight.Bold) },
                     actions = {
-                        TextButton(onClick = { viewModel.refreshSnapshot(notify = true) }, enabled = !state.busy) { Text("刷新") }
+                        TextButton(onClick = { viewModel.refreshSnapshot(notify = true); if (tab == 2) viewModel.loadGifts() }, enabled = !state.busy) { Text("刷新") }
                         TextButton(onClick = { showSettings = true }, enabled = !state.busy) { Text("设置") }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -550,14 +561,14 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             },
         ) { padding ->
             // Separate lists keep each destination's scroll position.
-            androidx.compose.runtime.key(records) {
+            androidx.compose.runtime.key(tab) {
                 LazyColumn(
                     modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding).imePadding(),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     item { Notice(state, viewModel::clearNotice) }
-                    if (!records) {
+                    if (tab == 0) {
                         item { CoupleHeroCard(snapshot, viewModel) }
                         item {
                             PairingCard("记录一次", null) {
@@ -593,12 +604,12 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                         item {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("最近的好感度记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                TextButton(onClick = { records = true }) { Text("查看记录  ›") }
+                                TextButton(onClick = { tab = 1 }) { Text("查看记录  ›") }
                             }
                         }
                         if (snapshot.events.isEmpty()) item { EmptyEventsCard() }
                         else items(snapshot.events.take(3), key = { it.id }) { EventCard(it, snapshot) }
-                    } else {
+                    } else if (tab == 1) {
                         item {
                             ElevatedCard(
                                 modifier = Modifier.fillMaxWidth(),
@@ -665,6 +676,18 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                     ) { Text("加载更多（还有 ${visibleEvents.size - visibleLimit} 条）") }
                                 }
                             }
+                        }
+                    } else {
+                        item { Notice(state, viewModel::clearNotice) }
+                        item { GiftGoalCard(state, viewModel) }
+                        val gifts = state.gifts?.gifts.orEmpty()
+                        val active = gifts.filter { it.status in ACTIVE_GIFT_STATUSES }
+                        if (active.isEmpty()) item { GiftRedeemCard(state, viewModel) }
+                        items(active, key = { it.id }) { GiftTrackingCard(it, state, viewModel) }
+                        val history = gifts.filterNot { it.status in ACTIVE_GIFT_STATUSES }
+                        if (history.isNotEmpty()) {
+                            item { Text("过往礼物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                            items(history, key = { it.id }) { GiftHistoryCard(it) }
                         }
                     }
                 }
@@ -822,6 +845,217 @@ private fun EventCard(event: ScoreEventItem, snapshot: CoupleSnapshot) {
 
 private fun partnerAwareName(snapshot: CoupleSnapshot, name: String): String =
     if (name == snapshot.partnerName && snapshot.partnerNickname.isNotBlank()) snapshot.partnerNickname else name
+
+@Composable
+private fun GiftGoalCard(state: AppUiState, viewModel: MainViewModel) {
+    val snapshot = state.snapshot ?: return
+    val target = state.gifts?.targetScore
+    var showEditor by rememberSaveable { mutableStateOf(false) }
+    ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
+        Column(Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("阶段性目标", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (target == null) "设一个分数，攒到就能兑换心意礼物" else "分数达到 $target 分，就能兑换一份心意礼物",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+                TextButton(onClick = { viewModel.setGiftGoalDraft(target?.toString() ?: ""); showEditor = true }, enabled = !state.busy) {
+                    Text(if (target == null) "设置目标" else "修改")
+                }
+            }
+            if (target != null) {
+                snapshot.cards.forEach { card ->
+                    val name = if (card.userId == snapshot.currentUserId) snapshot.currentUserName else snapshot.partnerNickname.ifBlank { snapshot.partnerName }
+                    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "${card.score}/$target" + if (card.score >= target) " · 可兑换" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (card.score >= target) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                                fontWeight = if (card.score >= target) FontWeight.Bold else null,
+                            )
+                        }
+                        Spacer(Modifier.height(5.dp))
+                        LinearProgressIndicator(
+                            progress = { (card.score.toFloat() / target).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    if (showEditor) {
+        AlertDialog(
+            onDismissRequest = { showEditor = false },
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("阶段性目标", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("双方达到目标分数后就可以兑换礼物，目标随时可以调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    NumberField("目标分数", state.giftGoalDraft, viewModel::setGiftGoalDraft)
+                }
+            },
+            confirmButton = { Button(onClick = { showEditor = false; viewModel.saveGiftGoal() }, enabled = !state.busy, shape = RoundedCornerShape(13.dp)) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { showEditor = false }) { Text("取消") } },
+        )
+    }
+}
+
+@Composable
+private fun GiftRedeemCard(state: AppUiState, viewModel: MainViewModel) {
+    val snapshot = state.snapshot ?: return
+    val target = state.gifts?.targetScore
+    val myScore = snapshot.cards.firstOrNull { it.userId == snapshot.currentUserId }?.score ?: 0
+    ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.94f))) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("兑换礼物", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            if (target == null || myScore < target) {
+                val text = if (target == null) "先设置一个阶段性目标，攒到那一天就能兑换礼物。" else "再攒 ${target - myScore} 分就可以兑换礼物啦，继续加油！"
+                Text(text, color = MaterialTheme.colorScheme.secondary)
+            } else {
+                Text("达到 $target 分啦，选一份想要的礼物告诉 TA 吧", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                AppTextField(state.giftTitle, viewModel::setGiftTitle, "想要什么礼物", "🎁")
+                FilterChipsRow(listOf("手工制品", "成品"), if (state.giftKind == "handmade") 0 else 1) { index ->
+                    viewModel.setGiftKind(if (index == 0) "handmade" else "ready")
+                }
+                Text("手工制品由对方亲手制作，成品直接买好寄出。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                AppTextField(state.giftNote, viewModel::setGiftNote, "备注（可选）", "✎")
+                PrimaryAction("提交兑换", state.busy, viewModel::submitGiftRedemption)
+                Text("提交后对方会确认这份礼物，然后更新制作/寄送进度。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GiftTrackingCard(gift: GiftItem, state: AppUiState, viewModel: MainViewModel) {
+    val snapshot = state.snapshot ?: return
+    val mine = gift.requesterId == snapshot.currentUserId
+    val requesterName = partnerAwareName(snapshot, gift.requesterName)
+    val giverName = if (mine) snapshot.partnerNickname.ifBlank { snapshot.partnerName } else snapshot.currentUserName
+    val nextLabel = when (gift.status) {
+        "requested" -> if (mine) null else "确认礼物"
+        "confirmed" -> if (gift.kind == "handmade") "标记已采购材料" else "标记已下单礼物"
+        "preparing" -> "标记已发货"
+        "shipped" -> "确认收到礼物"
+        else -> null
+    }
+    val canCancel = mine && gift.status in listOf("requested", "confirmed", "preparing")
+    ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🎁", fontSize = 24.sp, modifier = Modifier.padding(end = 8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(gift.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        if (mine) "我的心愿 · " + when (gift.kind) { "handmade" -> "手工制品"; else -> "成品" } else "$requesterName 的心愿 · " + when (gift.kind) { "handmade" -> "手工制品"; else -> "成品" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            }
+            if (!gift.note.isNullOrBlank()) Text("备注：${gift.note}", style = MaterialTheme.typography.bodyMedium)
+            GiftStepper(gift, requesterName, giverName)
+            if (nextLabel != null || canCancel) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (canCancel) {
+                        OutlinedButton(onClick = { viewModel.cancelGift(gift) }, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text("取消兑换") }
+                    }
+                    if (nextLabel != null) {
+                        Button(onClick = { viewModel.advanceGift(gift) }, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text(nextLabel) }
+                    }
+                }
+            }
+            if (gift.status == "requested" && mine) {
+                Text("等待 $giverName 确认这份礼物，确认后会开始准备。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GiftStepper(gift: GiftItem, requesterName: String, giverName: String) {
+    val steps = buildList {
+        add(GiftStep("${requesterName}提交了心愿", gift.createdAt, true))
+        add(GiftStep("${giverName}已确认礼物", gift.confirmedAt, gift.confirmedAt != null))
+        add(GiftStep(if (gift.kind == "handmade") "已采购材料" else "已下单礼物", gift.preparingAt, gift.preparingAt != null))
+        add(GiftStep("已发货", gift.shippedAt, gift.shippedAt != null))
+        add(GiftStep("${requesterName}收到礼物", gift.receivedAt, gift.receivedAt != null))
+        if (gift.status == "cancelled") add(GiftStep("兑换已取消", gift.cancelledAt, true, isCancel = true))
+    }
+    Column {
+        steps.forEachIndexed { index, step ->
+            val color = when {
+                step.isCancel -> MaterialTheme.colorScheme.error
+                step.done -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.outlineVariant
+            }
+            Row {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        modifier = Modifier.size(20.dp).clip(CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (step.done && !step.isCancel) {
+                            Box(Modifier.fillMaxSize().background(color, CircleShape))
+                            Text("✓", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        } else if (step.isCancel) {
+                            Box(Modifier.fillMaxSize().background(color, CircleShape))
+                            Text("×", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        } else {
+                            Box(Modifier.fillMaxSize().border(2.dp, color, CircleShape))
+                        }
+                    }
+                    if (index < steps.lastIndex) {
+                        val nextDone = steps[index + 1].done
+                        Box(
+                            Modifier.width(2.dp).height(16.dp)
+                                .background(if (step.done && nextDone) color.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.padding(bottom = 2.dp)) {
+                    Text(
+                        step.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (step.done) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (step.done) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (step.at != null) Text(formatTime(step.at), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GiftHistoryCard(gift: GiftItem) {
+    val received = gift.status == "received"
+    ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.9f))) {
+        Column(Modifier.padding(15.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (received) "🎉" else "🎁", modifier = Modifier.padding(end = 8.dp))
+                Text(gift.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (received) "已完成" else "已取消",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (received) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            val at = if (received) gift.receivedAt ?: gift.createdAt else gift.cancelledAt ?: gift.createdAt
+            Text("${gift.requesterName}的心愿 · ${formatTime(at)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
 
 @Composable
 private fun PresetRow(preset: ScorePreset, onClick: () -> Unit) {

@@ -37,6 +37,11 @@ import java.io.File
 @Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, @SerialName("partner_nickname") val partnerNickname: String = "", val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto, @SerialName("pending_rules") val pendingRules: PendingRulesDto? = null, @SerialName("latest_rule_decision") val latestRuleDecision: RuleDecisionDto? = null)
 @Serializable private data class ErrorDto(val error: String)
 @Serializable private data class AppReleaseDto(val version_code: Int, val version_name: String, val notes: String = "", val sha256: String = "", val size: Long = 0)
+@Serializable private data class GiftDto(val id: String, @SerialName("requester_id") val requesterId: String, @SerialName("requester_name") val requesterName: String, val title: String, val kind: String, val note: String? = null, val status: String, @SerialName("confirmed_at") val confirmedAt: String? = null, @SerialName("preparing_at") val preparingAt: String? = null, @SerialName("shipped_at") val shippedAt: String? = null, @SerialName("received_at") val receivedAt: String? = null, @SerialName("cancelled_at") val cancelledAt: String? = null, @SerialName("created_at") val createdAt: String)
+@Serializable private data class GiftsResponseDto(@SerialName("target_score") val targetScore: Int? = null, val gifts: List<GiftDto> = emptyList())
+@Serializable private data class GiftGoalRequest(@SerialName("target_score") val targetScore: Int)
+@Serializable private data class GiftCreateRequest(val title: String, val kind: String, val note: String? = null)
+@Serializable private data class GiftStatusRequest(val status: String)
 
 class FavorRepository(context: Context) {
     private val preferences = context.getSharedPreferences("favorapp_session", Context.MODE_PRIVATE)
@@ -61,6 +66,10 @@ class FavorRepository(context: Context) {
     suspend fun acceptRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/accept") { auth() }.check() }
     suspend fun rejectRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/reject") { auth() }.check() }
     suspend fun cancelRulesRequest(id: String) { client.post("$baseUrl/api/v1/score-settings/requests/$id/cancel") { auth() }.check() }
+    suspend fun loadGifts(): GiftBoard { val dto = client.get("$baseUrl/api/v1/gifts") { auth() }.bodyChecked<GiftsResponseDto>(); return GiftBoard(dto.targetScore, dto.gifts.map { GiftItem(it.id, it.requesterId, it.requesterName, it.title, it.kind, it.note, it.status, it.confirmedAt, it.preparingAt, it.shippedAt, it.receivedAt, it.cancelledAt, it.createdAt) }) }
+    suspend fun setGiftGoal(target: Int) { client.put("$baseUrl/api/v1/gifts/goal") { auth(); json(GiftGoalRequest(target)) }.check() }
+    suspend fun createGift(title: String, kind: String, note: String?) { client.post("$baseUrl/api/v1/gifts") { auth(); json(GiftCreateRequest(title, kind, note)) }.check() }
+    suspend fun updateGiftStatus(id: String, status: String) { client.post("$baseUrl/api/v1/gifts/$id/status") { auth(); json(GiftStatusRequest(status)) }.check() }
     suspend fun latestRelease(): AppRelease { val dto = client.get("$baseUrl/api/v1/app/latest") { auth() }.bodyChecked<AppReleaseDto>(); return AppRelease(dto.version_code, dto.version_name, dto.notes, dto.sha256, dto.size) }
     suspend fun downloadApk(destination: File, onProgress: (Long, Long) -> Unit) {
         client.prepareGet("$baseUrl/api/v1/app/apk") { auth() }.execute { response ->

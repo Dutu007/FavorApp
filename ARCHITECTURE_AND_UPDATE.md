@@ -16,7 +16,7 @@ api.zengdeming.cn -> zengdeming-gateway -> favorapp-api:8080
 
 | 服务 | 镜像 | 作用 |
 | --- | --- | --- |
-| `api` | `ghcr.io/dutu007/favorapp-api:latest` | 注册、登录、匹配、评分和记录 API |
+| `api` | `ghcr.io/dutu007/favorapp-api:latest` | 注册、登录、匹配、评分、记录和礼物奖励 API |
 | `postgres` | `ghcr.io/dutu007/favorapp-postgres:16-alpine` | 应用数据库 |
 
 资源限制：PostgreSQL 256 MB，API 128 MB，合计最多 384 MB。

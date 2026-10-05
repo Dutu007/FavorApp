@@ -10,6 +10,8 @@ import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ApiException
 import com.dutu007.favorapp.data.AppRelease
 import com.dutu007.favorapp.data.FavorRepository
+import com.dutu007.favorapp.data.GiftBoard
+import com.dutu007.favorapp.data.GiftItem
 import com.dutu007.favorapp.data.ScoreRule
 import com.dutu007.favorapp.data.ScoreSettingRow
 import com.dutu007.favorapp.data.ScorePreset
@@ -53,6 +55,11 @@ data class AppUiState(
     val scorePresets: List<ScorePreset> = emptyList(),
     val authenticated: Boolean = false,
     val snapshot: CoupleSnapshot? = null,
+    val gifts: GiftBoard? = null,
+    val giftTitle: String = "",
+    val giftKind: String = "handmade",
+    val giftNote: String = "",
+    val giftGoalDraft: String = "",
     val message: String? = null,
     val error: String? = null,
     val flash: String? = null,
@@ -511,6 +518,78 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    // Gift rewards live on their own board: a shared score goal plus one
+    // in-flight gift whose timeline both partners update by hand.
+    fun setGiftTitle(value: String) = _uiState.update { it.copy(giftTitle = value) }
+    fun setGiftKind(value: String) = _uiState.update { it.copy(giftKind = value) }
+    fun setGiftNote(value: String) = _uiState.update { it.copy(giftNote = value.take(NOTE_MAX_LENGTH)) }
+    fun setGiftGoalDraft(value: String) = _uiState.update { it.copy(giftGoalDraft = value.filter(Char::isDigit)) }
+
+    fun loadGifts() {
+        if (repository.currentUserId() == null) return
+        viewModelScope.launch {
+            try {
+                val board = repository.loadGifts()
+                _uiState.update { it.copy(gifts = board) }
+            } catch (error: Exception) {
+                if (error is ApiException && error.statusCode == 401) {
+                    repository.clearSession()
+                    resetScoreKey()
+                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                }
+            }
+        }
+    }
+
+    fun saveGiftGoal() {
+        val target = _uiState.value.giftGoalDraft.toIntOrNull()
+        if (target == null || target !in 1..1000000) {
+            _uiState.update { it.copy(error = "目标分数需为 1-1000000 的整数") }
+            return
+        }
+        runBusy {
+            repository.setGiftGoal(target)
+            _uiState.update { it.copy(giftGoalDraft = "", message = "阶段性目标已更新") }
+            loadGifts()
+        }
+    }
+
+    fun submitGiftRedemption() {
+        val state = _uiState.value
+        val title = state.giftTitle.trim()
+        if (title.isEmpty()) { _uiState.update { it.copy(error = "请填写想要的礼物") }; return }
+        if (title.length > 40) { _uiState.update { it.copy(error = "礼物名称最多 40 个字") }; return }
+        if (state.giftNote.length > NOTE_MAX_LENGTH) { _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }; return }
+        runBusy {
+            repository.createGift(title, state.giftKind, state.giftNote.trim().takeIf { it.isNotEmpty() })
+            _uiState.update { it.copy(giftTitle = "", giftNote = "", message = "兑换已提交，等待对方确认") }
+            loadGifts()
+        }
+    }
+
+    fun advanceGift(gift: GiftItem) {
+        val next = when (gift.status) {
+            "requested" -> "confirmed"
+            "confirmed" -> "preparing"
+            "preparing" -> "shipped"
+            "shipped" -> "received"
+            else -> return
+        }
+        runBusy {
+            repository.updateGiftStatus(gift.id, next)
+            _uiState.update { it.copy(message = if (next == "received") "礼物送达，这一阶段圆满啦" else "礼物进度已更新") }
+            loadGifts()
+        }
+    }
+
+    fun cancelGift(gift: GiftItem) {
+        runBusy {
+            repository.updateGiftStatus(gift.id, "cancelled")
+            _uiState.update { it.copy(message = "兑换已取消") }
+            loadGifts()
+        }
+    }
+
     private fun runBusy(block: suspend () -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(busy = true, error = null, message = null) }
@@ -566,6 +645,17 @@ class MainViewModel : ViewModel() {
             raw.contains("request_not_found", ignoreCase = true) -> "修改请求不存在"
             raw.contains("cannot_respond_own_request", ignoreCase = true) -> "不能处理自己发起的请求"
             raw.contains("note_too_long", ignoreCase = true) -> "备注最多 200 个字"
+            raw.contains("score_below_goal", ignoreCase = true) -> "分数还没达到目标，继续加油"
+            raw.contains("goal_not_set", ignoreCase = true) -> "请先设置一个阶段性目标"
+            raw.contains("invalid_gift_goal", ignoreCase = true) -> "目标分数需为 1-1000000 的整数"
+            raw.contains("invalid_gift_title", ignoreCase = true) -> "请填写礼物名称（最多 40 个字）"
+            raw.contains("invalid_gift_kind", ignoreCase = true) -> "请选择礼物类型"
+            raw.contains("gift_already_active", ignoreCase = true) -> "已有一份礼物在进行中，完成后再兑换下一份"
+            raw.contains("gift_already_finished", ignoreCase = true) -> "这份礼物已经完成或取消了"
+            raw.contains("gift_already_shipped", ignoreCase = true) -> "礼物已发货，不能取消"
+            raw.contains("cannot_cancel_other_gift", ignoreCase = true) -> "只能取消自己兑换的礼物"
+            raw.contains("gift_status_conflict", ignoreCase = true) -> "礼物状态刚刚变了，刷新后再试"
+            raw.contains("gift_not_found", ignoreCase = true) -> "礼物不存在"
             raw.contains("display_name_too_long", ignoreCase = true) -> "昵称最多 40 个字"
             raw.contains("ignoreUnknownKeys", ignoreCase = true) || raw.contains("unknown key", ignoreCase = true) -> "App 版本过旧，请更新到最新版本"
             raw.contains("database_error", ignoreCase = true) || raw.contains("invite_failed", ignoreCase = true) || raw.contains("session_failed", ignoreCase = true) || raw.contains("password_hash_failed", ignoreCase = true) || raw.contains("request_failed", ignoreCase = true) -> "服务器开小差了，请稍后重试"

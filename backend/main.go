@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -50,6 +51,9 @@ type inviteRequest struct { Code string `json:"code"` }
 type inviteCreateRequest struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 type scoreRequest struct { Delta int `json:"delta"`; Note string `json:"note"`; IdempotencyKey string `json:"idempotency_key"` }
 type nicknameRequest struct { Nickname string `json:"nickname"` }
+type giftGoalRequest struct { TargetScore int `json:"target_score"` }
+type giftCreateRequest struct { Title string `json:"title"`; Kind string `json:"kind"`; Note string `json:"note"` }
+type giftStatusRequest struct { Status string `json:"status"` }
 
 type userJSON struct { ID string `json:"id"`; Username string `json:"username"`; DisplayName string `json:"display_name"` }
 type authResponse struct { Token string `json:"token"`; User userJSON `json:"user"` }
@@ -92,6 +96,10 @@ func main() {
 	mux.Handle("PUT /api/v1/me/avatar", s.auth(http.HandlerFunc(s.updateAvatar)))
 	mux.Handle("DELETE /api/v1/me/avatar", s.auth(http.HandlerFunc(s.deleteAvatar)))
 	mux.Handle("GET /api/v1/users/{id}/avatar", s.auth(http.HandlerFunc(s.avatar)))
+	mux.Handle("GET /api/v1/gifts", s.auth(http.HandlerFunc(s.gifts)))
+	mux.Handle("PUT /api/v1/gifts/goal", s.auth(http.HandlerFunc(s.setGiftGoal)))
+	mux.Handle("POST /api/v1/gifts", s.auth(http.HandlerFunc(s.createGift)))
+	mux.Handle("POST /api/v1/gifts/{id}/status", s.auth(http.HandlerFunc(s.updateGiftStatus)))
 	mux.Handle("GET /api/v1/app/latest", s.auth(http.HandlerFunc(s.latestApp)))
 	mux.Handle("GET /api/v1/app/apk", s.auth(http.HandlerFunc(s.appAPK)))
 
@@ -114,7 +122,8 @@ func migrate(ctx context.Context, db *pgxpool.Pool) error {
 	var names []string; for _, e := range entries { if !e.IsDir() { names = append(names, e.Name()) } }; sort.Strings(names)
 	for _, name := range names {
 		var applied bool; if err := db.QueryRow(ctx, `select exists(select 1 from schema_migrations where name=$1)`, name).Scan(&applied); err != nil { return err }; if applied { continue }
-		data, err := migrationFiles.ReadFile(filepath.Join("migrations", name)); if err != nil { return err }
+		// embed.FS always stores slash-separated paths, so join with path (not filepath).
+		data, err := migrationFiles.ReadFile(path.Join("migrations", name)); if err != nil { return err }
 		tx, err := db.Begin(ctx); if err != nil { return err }
 		if _, err = tx.Exec(ctx, string(data)); err == nil { _, err = tx.Exec(ctx, `insert into schema_migrations(name) values($1)`, name) }
 		if err != nil { _ = tx.Rollback(ctx); return fmt.Errorf("migration %s: %w", name, err) }; if err = tx.Commit(ctx); err != nil { return err }
@@ -313,6 +322,112 @@ func (s *server) cancelRulesRequest(w http.ResponseWriter, r *http.Request) {
 	tag, err := s.db.Exec(r.Context(), `update rule_change_requests set status='cancelled',responded_at=now() where id=$1 and requester_id=$2 and status='pending'`, id, uid)
 	if err != nil { errorJSON(w, 500, "database_error"); return }; if tag.RowsAffected() == 0 { errorJSON(w, 409, "request_not_pending"); return }
 	writeJSON(w, 200, map[string]string{"status": "cancelled"})
+}
+
+// Gifts: the couple shares one score goal; reaching it unlocks redeeming a gift,
+// which then walks a manual timeline (confirmed → preparing → shipped → received) both can see.
+var giftNextStatus = map[string]string{"requested": "confirmed", "confirmed": "preparing", "preparing": "shipped", "shipped": "received"}
+var giftStatusColumn = map[string]string{"confirmed": "confirmed_at", "preparing": "preparing_at", "shipped": "shipped_at", "received": "received_at"}
+
+type giftJSON struct {
+	ID string `json:"id"`; RequesterID string `json:"requester_id"`; RequesterName string `json:"requester_name"`
+	Title string `json:"title"`; Kind string `json:"kind"`; Note *string `json:"note"`; Status string `json:"status"`
+	ConfirmedAt *time.Time `json:"confirmed_at"`; PreparingAt *time.Time `json:"preparing_at"`; ShippedAt *time.Time `json:"shipped_at"`
+	ReceivedAt *time.Time `json:"received_at"`; CancelledAt *time.Time `json:"cancelled_at"`; CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *server) coupleID(r *http.Request) (uuid.UUID, error) {
+	var cid uuid.UUID
+	err := s.db.QueryRow(r.Context(), `select id from couples where status='active' and (member_a=$1 or member_b=$1)`, userID(r)).Scan(&cid)
+	return cid, err
+}
+
+func (s *server) gifts(w http.ResponseWriter, r *http.Request) {
+	cid, err := s.coupleID(r)
+	if err != nil { writeJSON(w, 200, map[string]any{"target_score": nil, "gifts": []giftJSON{}}); return }
+	var target *int
+	_ = s.db.QueryRow(r.Context(), `select target_score from gift_goals where couple_id=$1`, cid).Scan(&target)
+	writeJSON(w, 200, map[string]any{"target_score": target, "gifts": s.loadGifts(r.Context(), cid)})
+}
+
+func (s *server) loadGifts(ctx context.Context, cid uuid.UUID) []giftJSON {
+	rows, err := s.db.Query(ctx, `select g.id,g.requester_id,coalesce(nullif(u.display_name,''),u.username),g.title,g.kind,g.note,g.status,g.confirmed_at,g.preparing_at,g.shipped_at,g.received_at,g.cancelled_at,g.created_at from gift_rewards g join app_users u on u.id=g.requester_id where g.couple_id=$1 order by g.created_at desc limit 100`, cid)
+	if err != nil { return []giftJSON{} }
+	defer rows.Close()
+	out := []giftJSON{}
+	for rows.Next() {
+		var id, requester uuid.UUID
+		var name, title, kind, status string
+		var note *string
+		var confirmedAt, preparingAt, shippedAt, receivedAt, cancelledAt *time.Time
+		var createdAt time.Time
+		if rows.Scan(&id, &requester, &name, &title, &kind, &note, &status, &confirmedAt, &preparingAt, &shippedAt, &receivedAt, &cancelledAt, &createdAt) == nil {
+			out = append(out, giftJSON{id.String(), requester.String(), name, title, kind, note, status, confirmedAt, preparingAt, shippedAt, receivedAt, cancelledAt, createdAt})
+		}
+	}
+	return out
+}
+
+func (s *server) setGiftGoal(w http.ResponseWriter, r *http.Request) {
+	var req giftGoalRequest
+	if !decodeJSON(w, r, &req) { return }
+	if req.TargetScore < 1 || req.TargetScore > 1000000 { errorJSON(w, 400, "invalid_gift_goal"); return }
+	cid, err := s.coupleID(r)
+	if err != nil { errorJSON(w, 409, "not_matched"); return }
+	if _, err := s.db.Exec(r.Context(), `insert into gift_goals(couple_id,target_score,updated_by) values($1,$2,$3) on conflict (couple_id) do update set target_score=$2,updated_by=$3,updated_at=now()`, cid, req.TargetScore, userID(r)); err != nil { errorJSON(w, 500, "database_error"); return }
+	writeJSON(w, 200, map[string]int{"target_score": req.TargetScore})
+}
+
+func (s *server) createGift(w http.ResponseWriter, r *http.Request) {
+	var req giftCreateRequest
+	if !decodeJSON(w, r, &req) { return }
+	title := strings.TrimSpace(req.Title)
+	if title == "" || len([]rune(title)) > 40 { errorJSON(w, 400, "invalid_gift_title"); return }
+	if req.Kind != "handmade" && req.Kind != "ready" { errorJSON(w, 400, "invalid_gift_kind"); return }
+	if len([]rune(req.Note)) > 200 { errorJSON(w, 400, "note_too_long"); return }
+	uid := userID(r)
+	cid, err := s.coupleID(r)
+	if err != nil { errorJSON(w, 409, "not_matched"); return }
+	var goal int
+	if err := s.db.QueryRow(r.Context(), `select target_score from gift_goals where couple_id=$1`, cid).Scan(&goal); err != nil { errorJSON(w, 400, "goal_not_set"); return }
+	var score int
+	if err := s.db.QueryRow(r.Context(), `select current_score from couple_scores where couple_id=$1 and target_user_id=$2`, cid, uid).Scan(&score); err != nil { errorJSON(w, 500, "database_error"); return }
+	if score < goal { errorJSON(w, 400, "score_below_goal"); return }
+	id := uuid.New()
+	if _, err := s.db.Exec(r.Context(), `insert into gift_rewards(id,couple_id,requester_id,title,kind,note) values($1,$2,$3,$4,$5,nullif(trim($6),''))`, id, cid, uid, title, req.Kind, req.Note); err != nil {
+		// The partial unique index keeps a second concurrent redemption out.
+		if strings.Contains(err.Error(), "duplicate") { errorJSON(w, 409, "gift_already_active") } else { errorJSON(w, 500, "database_error") }
+		return
+	}
+	writeJSON(w, 200, map[string]string{"id": id.String(), "status": "requested"})
+}
+
+func (s *server) updateGiftStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil { errorJSON(w, 400, "invalid_request"); return }
+	var req giftStatusRequest
+	if !decodeJSON(w, r, &req) { return }
+	uid := userID(r)
+	tx, err := s.db.Begin(r.Context())
+	if err != nil { errorJSON(w, 500, "database_error"); return }
+	defer tx.Rollback(r.Context())
+	var cid, requester uuid.UUID
+	var current string
+	if err = tx.QueryRow(r.Context(), `select couple_id,requester_id,status from gift_rewards where id=$1 for update`, id).Scan(&cid, &requester, &current); err != nil { errorJSON(w, 404, "gift_not_found"); return }
+	var member bool
+	_ = tx.QueryRow(r.Context(), `select exists(select 1 from couples where id=$1 and status='active' and (member_a=$2 or member_b=$2))`, cid, uid).Scan(&member)
+	if !member { errorJSON(w, 403, "forbidden"); return }
+	if current == "received" || current == "cancelled" { errorJSON(w, 409, "gift_already_finished"); return }
+	if req.Status == "cancelled" {
+		if requester != uid { errorJSON(w, 403, "cannot_cancel_other_gift"); return }
+		if current == "shipped" { errorJSON(w, 409, "gift_already_shipped"); return }
+		if _, err = tx.Exec(r.Context(), `update gift_rewards set status='cancelled',cancelled_at=now(),updated_at=now() where id=$1`, id); err != nil { errorJSON(w, 500, "database_error"); return }
+	} else {
+		if giftNextStatus[current] != req.Status || giftStatusColumn[req.Status] == "" { errorJSON(w, 409, "gift_status_conflict"); return }
+		if _, err = tx.Exec(r.Context(), `update gift_rewards set status=$2,`+giftStatusColumn[req.Status]+`=now(),updated_at=now() where id=$1`, id, req.Status); err != nil { errorJSON(w, 500, "database_error"); return }
+	}
+	if err = tx.Commit(r.Context()); err != nil { errorJSON(w, 500, "database_error"); return }
+	writeJSON(w, 200, map[string]string{"status": req.Status})
 }
 func other(uid,a,b uuid.UUID)uuid.UUID{if uid==a{return b};return a};func optional(v string)*string{v=strings.TrimSpace(v);if v==""{return nil};return &v};func sha256Bytes(v string)[]byte{h:=sha256.Sum256([]byte(v));return h[:]};func tokenHash(token string)[]byte{return sha256Bytes(token)};func newSessionToken()(string,[]byte,error){raw:=make([]byte,32);if _,err:=rand.Read(raw);err!=nil{return "",nil,err};token:=base64.RawURLEncoding.EncodeToString(raw);return token,tokenHash(token),nil}
 func validateScoreRules(initial int, min, max *int, addMin, addMax, subtractMin, subtractMax int) string { if min != nil && max != nil && *min > *max { return "invalid_score_range" }; if min != nil && initial < *min || max != nil && initial > *max { return "initial_score_outside_range" }; if addMin < 1 || addMax < addMin || addMax > 100 { return "invalid_add_range" }; if subtractMin < 1 || subtractMax < subtractMin || subtractMax > 100 { return "invalid_subtract_range" }; return "" }

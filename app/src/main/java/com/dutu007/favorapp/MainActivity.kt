@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
@@ -66,6 +67,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -75,7 +77,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
@@ -84,6 +88,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -117,10 +126,46 @@ private val PinkGradient = Brush.verticalGradient(
 private const val RECORDS_PAGE_SIZE = 50
 private const val RECORDS_SERVER_LIMIT = 200
 
-// Gift statuses that still sit on the tracking timeline (not yet received/cancelled).
-private val ACTIVE_GIFT_STATUSES = setOf("requested", "confirmed", "preparing", "shipped")
+// A gift stays "active" until every timeline node is done (received) or cancelled.
+private const val GIFT_ACTIVE = "active"
+private const val GIFT_RECEIVED = "received"
 
-private data class GiftStep(val label: String, val at: String?, val done: Boolean, val isCancel: Boolean = false)
+// Line-art gift icon for the bottom bar, drawn to match the text-glyph icons.
+private val GiftNavIcon: ImageVector = ImageVector.Builder(
+    name = "GiftLine",
+    defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f,
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 1.7f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+    ) {
+        // bow: two loops
+        moveTo(11.3f, 5.9f)
+        arcTo(2.1f, 2.1f, 0f, true, true, 7.1f, 5.9f)
+        arcTo(2.1f, 2.1f, 0f, true, true, 11.3f, 5.9f)
+        moveTo(16.9f, 5.9f)
+        arcTo(2.1f, 2.1f, 0f, true, true, 12.7f, 5.9f)
+        arcTo(2.1f, 2.1f, 0f, true, true, 16.9f, 5.9f)
+        // lid
+        moveTo(4.5f, 8.2f)
+        horizontalLineTo(19.5f)
+        verticalLineTo(11.2f)
+        horizontalLineTo(4.5f)
+        close()
+        // box
+        moveTo(6f, 11.2f)
+        lineTo(18f, 11.2f)
+        lineTo(18f, 20.2f)
+        lineTo(6f, 20.2f)
+        close()
+        // ribbon
+        moveTo(12f, 8.2f)
+        lineTo(12f, 20.2f)
+    }
+}.build()
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -545,8 +590,8 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             bottomBar = {
                 NavigationBar(modifier = Modifier.height(60.dp), containerColor = Color.White, tonalElevation = 0.dp) {
                     NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("♡", fontSize = 24.sp) })
+                    NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(GiftNavIcon, contentDescription = null, modifier = Modifier.size(24.dp)) })
                     NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("☰", fontSize = 24.sp) })
-                    NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Text("🎁", fontSize = 20.sp) })
                 }
             },
             topBar = {
@@ -657,7 +702,6 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                 }
                             }
                         }
-                        item { Notice(state, viewModel::clearNotice) }
                         if (visibleEvents.isEmpty()) {
                             item {
                                 val filtersActive = keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0
@@ -678,13 +722,14 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                             }
                         }
                     } else {
-                        item { Notice(state, viewModel::clearNotice) }
                         item { GiftGoalCard(state, viewModel) }
                         val gifts = state.gifts?.gifts.orEmpty()
-                        val active = gifts.filter { it.status in ACTIVE_GIFT_STATUSES }
-                        if (active.isEmpty()) item { GiftRedeemCard(state, viewModel) }
-                        items(active, key = { it.id }) { GiftTrackingCard(it, state, viewModel) }
-                        val history = gifts.filterNot { it.status in ACTIVE_GIFT_STATUSES }
+                        val mine = gifts.firstOrNull { it.status == GIFT_ACTIVE && it.requesterId == snapshot.currentUserId }
+                        val theirs = gifts.firstOrNull { it.status == GIFT_ACTIVE && it.requesterId != snapshot.currentUserId }
+                        if (mine == null) item { GiftRedeemCard(state, viewModel) }
+                        if (mine != null) item(key = mine.id) { GiftTrackingCard(mine, state, viewModel) }
+                        if (theirs != null) item(key = theirs.id) { GiftTrackingCard(theirs, state, viewModel) }
+                        val history = gifts.filter { it.status != GIFT_ACTIVE }
                         if (history.isNotEmpty()) {
                             item { Text("过往礼物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
                             items(history, key = { it.id }) { GiftHistoryCard(it) }
@@ -849,43 +894,41 @@ private fun partnerAwareName(snapshot: CoupleSnapshot, name: String): String =
 @Composable
 private fun GiftGoalCard(state: AppUiState, viewModel: MainViewModel) {
     val snapshot = state.snapshot ?: return
-    val target = state.gifts?.targetScore
+    val goals = state.gifts?.goals.orEmpty()
+    val myGoal = goals.firstOrNull { it.userId == snapshot.currentUserId }?.targetScore
     var showEditor by rememberSaveable { mutableStateOf(false) }
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
         Column(Modifier.padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("阶段性目标", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        if (target == null) "设一个分数，攒到就能兑换心意礼物" else "分数达到 $target 分，就能兑换一份心意礼物",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
+                    Text("每人有自己的目标，达到后就能兑换心意礼物", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                 }
-                TextButton(onClick = { viewModel.setGiftGoalDraft(target?.toString() ?: ""); showEditor = true }, enabled = !state.busy) {
-                    Text(if (target == null) "设置目标" else "修改")
+                TextButton(onClick = { viewModel.setGiftGoalDraft(myGoal?.toString() ?: ""); showEditor = true }, enabled = !state.busy) {
+                    Text(if (myGoal == null) "设我的目标" else "改我的")
                 }
             }
-            if (target != null) {
-                snapshot.cards.forEach { card ->
-                    val name = if (card.userId == snapshot.currentUserId) snapshot.currentUserName else snapshot.partnerNickname.ifBlank { snapshot.partnerName }
-                    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                "${card.score}/$target" + if (card.score >= target) " · 可兑换" else "",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (card.score >= target) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                                fontWeight = if (card.score >= target) FontWeight.Bold else null,
-                            )
-                        }
-                        Spacer(Modifier.height(5.dp))
-                        LinearProgressIndicator(
-                            progress = { (card.score.toFloat() / target).coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            snapshot.cards.forEach { card ->
+                val isMe = card.userId == snapshot.currentUserId
+                val name = if (isMe) snapshot.currentUserName else snapshot.partnerNickname.ifBlank { snapshot.partnerName }
+                val goal = goals.firstOrNull { it.userId == card.userId }?.targetScore
+                val reached = goal != null && card.score >= goal
+                Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (goal == null) "未设置目标" else "${card.score}/$goal" + if (reached) " · 可兑换" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (reached) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                            fontWeight = if (reached) FontWeight.Bold else null,
                         )
                     }
+                    Spacer(Modifier.height(5.dp))
+                    LinearProgressIndicator(
+                        progress = { if (goal == null) 0f else (card.score.toFloat() / goal).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    )
                 }
             }
         }
@@ -894,10 +937,10 @@ private fun GiftGoalCard(state: AppUiState, viewModel: MainViewModel) {
         AlertDialog(
             onDismissRequest = { showEditor = false },
             shape = RoundedCornerShape(26.dp),
-            title = { Text("阶段性目标", fontWeight = FontWeight.Bold) },
+            title = { Text("我的阶段性目标", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    Text("双方达到目标分数后就可以兑换礼物，目标随时可以调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("只影响你自己：你的分数达到目标后就可以兑换礼物，随时可调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(10.dp))
                     NumberField("目标分数", state.giftGoalDraft, viewModel::setGiftGoalDraft)
                 }
@@ -911,16 +954,16 @@ private fun GiftGoalCard(state: AppUiState, viewModel: MainViewModel) {
 @Composable
 private fun GiftRedeemCard(state: AppUiState, viewModel: MainViewModel) {
     val snapshot = state.snapshot ?: return
-    val target = state.gifts?.targetScore
+    val myGoal = state.gifts?.goals.orEmpty().firstOrNull { it.userId == snapshot.currentUserId }?.targetScore
     val myScore = snapshot.cards.firstOrNull { it.userId == snapshot.currentUserId }?.score ?: 0
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.94f))) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("兑换礼物", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-            if (target == null || myScore < target) {
-                val text = if (target == null) "先设置一个阶段性目标，攒到那一天就能兑换礼物。" else "再攒 ${target - myScore} 分就可以兑换礼物啦，继续加油！"
+            if (myGoal == null || myScore < myGoal) {
+                val text = if (myGoal == null) "先在上方设置你自己的阶段性目标吧。" else "再攒 ${myGoal - myScore} 分就可以兑换礼物啦，继续加油！"
                 Text(text, color = MaterialTheme.colorScheme.secondary)
             } else {
-                Text("达到 $target 分啦，选一份想要的礼物告诉 TA 吧", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                Text("达到 $myGoal 分啦，选一份想要的礼物告诉 TA 吧", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                 AppTextField(state.giftTitle, viewModel::setGiftTitle, "想要什么礼物", "🎁")
                 FilterChipsRow(listOf("手工制品", "成品"), if (state.giftKind == "handmade") 0 else 1) { index ->
                     viewModel.setGiftKind(if (index == 0) "handmade" else "ready")
@@ -940,94 +983,149 @@ private fun GiftTrackingCard(gift: GiftItem, state: AppUiState, viewModel: MainV
     val mine = gift.requesterId == snapshot.currentUserId
     val requesterName = partnerAwareName(snapshot, gift.requesterName)
     val giverName = if (mine) snapshot.partnerNickname.ifBlank { snapshot.partnerName } else snapshot.currentUserName
-    val nextLabel = when (gift.status) {
-        "requested" -> if (mine) null else "确认礼物"
-        "confirmed" -> if (gift.kind == "handmade") "标记已采购材料" else "标记已下单礼物"
-        "preparing" -> "标记已发货"
-        "shipped" -> "确认收到礼物"
-        else -> null
+    val kindLabel = if (gift.kind == "handmade") "手工制品" else "成品"
+    var showProgressDialog by remember { mutableStateOf(false) }
+    var showStepsEditor by remember { mutableStateOf(false) }
+    val roleText = when {
+        gift.status == "cancelled" -> if (mine) "我的心愿 · 已取消" else "${requesterName}的心愿 · 已取消"
+        gift.status == GIFT_RECEIVED -> if (mine) "我的心愿 · 已完成" else "${requesterName}的心愿 · 已完成"
+        mine -> "我的心愿 · $giverName 正在准备 · $kindLabel"
+        else -> "${requesterName}的心愿 · 我来准备 · $kindLabel"
     }
-    val canCancel = mine && gift.status in listOf("requested", "confirmed", "preparing")
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("🎁", fontSize = 24.sp, modifier = Modifier.padding(end = 8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(gift.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        if (mine) "我的心愿 · " + when (gift.kind) { "handmade" -> "手工制品"; else -> "成品" } else "$requesterName 的心愿 · " + when (gift.kind) { "handmade" -> "手工制品"; else -> "成品" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
+                    Text(roleText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                }
+                if (gift.status == "cancelled") {
+                    Text("已取消", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             }
             if (!gift.note.isNullOrBlank()) Text("备注：${gift.note}", style = MaterialTheme.typography.bodyMedium)
-            GiftStepper(gift, requesterName, giverName)
-            if (nextLabel != null || canCancel) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (canCancel) {
-                        OutlinedButton(onClick = { viewModel.cancelGift(gift) }, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text("取消兑换") }
+            GiftStepper(gift)
+            if (gift.status == GIFT_ACTIVE) {
+                if (gift.currentStep < gift.steps.size) {
+                    val nextLabel = gift.steps[gift.currentStep].label
+                    Button(onClick = { viewModel.setGiftProgress(gift, gift.currentStep + 1) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                        Text(if (gift.currentStep + 1 == gift.steps.size) "完成最后一步：「$nextLabel」" else "完成下一步：「$nextLabel」")
                     }
-                    if (nextLabel != null) {
-                        Button(onClick = { viewModel.advanceGift(gift) }, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text(nextLabel) }
+                } else {
+                    Button(onClick = { viewModel.setGiftProgress(gift, gift.steps.size) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                        Text("标记为已收到 🎉")
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showProgressDialog = true }, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text("调整进度") }
+                    OutlinedButton(onClick = { showStepsEditor = true }, enabled = !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Text("编辑节点") }
+                }
+                if (mine) {
+                    OutlinedButton(onClick = { viewModel.cancelGift(gift) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                        Text("取消兑换", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
-            if (gift.status == "requested" && mine) {
-                Text("等待 $giverName 确认这份礼物，确认后会开始准备。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
         }
+    }
+    if (showProgressDialog) {
+        AlertDialog(
+            onDismissRequest = { showProgressDialog = false },
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("调整进度", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("选择目前完成到哪一步，双方都会看到。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    GiftProgressOption("还没开始（全部未完成）", gift.currentStep == 0) { showProgressDialog = false; viewModel.setGiftProgress(gift, 0) }
+                    gift.steps.forEachIndexed { index, step ->
+                        GiftProgressOption("完成到「${step.label}」", gift.currentStep == index + 1) { showProgressDialog = false; viewModel.setGiftProgress(gift, index + 1) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showProgressDialog = false }) { Text("关闭") } },
+        )
+    }
+    if (showStepsEditor) {
+        val labels = remember(gift.id, gift.steps) { mutableStateListOf<String>().apply { addAll(gift.steps.map { it.label }.ifEmpty { listOf("") }) } }
+        AlertDialog(
+            onDismissRequest = { showStepsEditor = false },
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("编辑进度节点", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("节点数量和文字都可以自定义（1-8 个，每个最多 12 个字）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    labels.forEachIndexed { index, _ ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = labels[index],
+                                onValueChange = { labels[index] = it.take(12) },
+                                label = { Text("节点 ${index + 1}") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(15.dp),
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (labels.size > 1) {
+                                TextButton(onClick = { labels.removeAt(index) }, enabled = !state.busy) { Text("删除") }
+                            }
+                        }
+                    }
+                    if (labels.size < 8) {
+                        TextButton(onClick = { labels.add("") }, enabled = !state.busy) { Text("+ 添加节点") }
+                    }
+                }
+            },
+            confirmButton = { Button(onClick = { showStepsEditor = false; viewModel.updateGiftSteps(gift, labels.toList()) }, enabled = !state.busy, shape = RoundedCornerShape(13.dp)) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { showStepsEditor = false }) { Text("取消") } },
+        )
     }
 }
 
 @Composable
-private fun GiftStepper(gift: GiftItem, requesterName: String, giverName: String) {
-    val steps = buildList {
-        add(GiftStep("${requesterName}提交了心愿", gift.createdAt, true))
-        add(GiftStep("${giverName}已确认礼物", gift.confirmedAt, gift.confirmedAt != null))
-        add(GiftStep(if (gift.kind == "handmade") "已采购材料" else "已下单礼物", gift.preparingAt, gift.preparingAt != null))
-        add(GiftStep("已发货", gift.shippedAt, gift.shippedAt != null))
-        add(GiftStep("${requesterName}收到礼物", gift.receivedAt, gift.receivedAt != null))
-        if (gift.status == "cancelled") add(GiftStep("兑换已取消", gift.cancelledAt, true, isCancel = true))
+private fun GiftProgressOption(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onSelect).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium)
     }
+}
+
+@Composable
+private fun GiftStepper(gift: GiftItem) {
+    if (gift.steps.isEmpty()) return
     Column {
-        steps.forEachIndexed { index, step ->
-            val color = when {
-                step.isCancel -> MaterialTheme.colorScheme.error
-                step.done -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.outlineVariant
-            }
+        gift.steps.forEachIndexed { index, step ->
+            val done = index < gift.currentStep
+            val inProgress = gift.status == GIFT_ACTIVE && index == gift.currentStep
+            val color = if (done || inProgress) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
             Row {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier.size(20.dp).clip(CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (step.done && !step.isCancel) {
+                    Box(modifier = Modifier.size(20.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
+                        if (done) {
                             Box(Modifier.fillMaxSize().background(color, CircleShape))
                             Text("✓", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                        } else if (step.isCancel) {
-                            Box(Modifier.fillMaxSize().background(color, CircleShape))
-                            Text("×", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
                         } else {
                             Box(Modifier.fillMaxSize().border(2.dp, color, CircleShape))
+                            if (inProgress) Box(Modifier.size(8.dp).background(color, CircleShape))
                         }
                     }
-                    if (index < steps.lastIndex) {
-                        val nextDone = steps[index + 1].done
+                    if (index < gift.steps.lastIndex) {
                         Box(
                             Modifier.width(2.dp).height(16.dp)
-                                .background(if (step.done && nextDone) color.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                                .background(if (index + 1 < gift.currentStep) color.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
                         )
                     }
                 }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.padding(bottom = 2.dp)) {
                     Text(
-                        step.label,
+                        step.label + if (inProgress) "（进行中）" else "",
                         style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (step.done) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (step.done) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (done || inProgress) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (done || inProgress) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (step.at != null) Text(formatTime(step.at), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                 }
@@ -1038,7 +1136,7 @@ private fun GiftStepper(gift: GiftItem, requesterName: String, giverName: String
 
 @Composable
 private fun GiftHistoryCard(gift: GiftItem) {
-    val received = gift.status == "received"
+    val received = gift.status == GIFT_RECEIVED
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.9f))) {
         Column(Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1051,7 +1149,7 @@ private fun GiftHistoryCard(gift: GiftItem) {
                     fontWeight = FontWeight.Bold,
                 )
             }
-            val at = if (received) gift.receivedAt ?: gift.createdAt else gift.cancelledAt ?: gift.createdAt
+            val at = gift.steps.lastOrNull()?.at ?: gift.cancelledAt ?: gift.createdAt
             Text("${gift.requesterName}的心愿 · ${formatTime(at)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 6.dp))
         }
     }

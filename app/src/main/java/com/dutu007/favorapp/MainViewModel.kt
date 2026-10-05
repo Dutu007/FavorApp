@@ -567,24 +567,32 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun advanceGift(gift: GiftItem) {
-        val next = when (gift.status) {
-            "requested" -> "confirmed"
-            "confirmed" -> "preparing"
-            "preparing" -> "shipped"
-            "shipped" -> "received"
-            else -> return
-        }
+    // Either partner can rename/add/remove nodes and pick how far the timeline
+    // has gotten; finishing every node completes the gift.
+    fun updateGiftSteps(gift: GiftItem, labels: List<String>) {
+        val cleaned = labels.map { it.trim() }.filter { it.isNotEmpty() }
+        if (cleaned.isEmpty()) { _uiState.update { it.copy(error = "至少保留一个进度节点") }; return }
+        if (cleaned.size > 8) { _uiState.update { it.copy(error = "节点最多 8 个") }; return }
+        if (cleaned.any { it.length > 12 }) { _uiState.update { it.copy(error = "节点文字最多 12 个字") }; return }
         runBusy {
-            repository.updateGiftStatus(gift.id, next)
-            _uiState.update { it.copy(message = if (next == "received") "礼物送达，这一阶段圆满啦" else "礼物进度已更新") }
+            repository.updateGiftSteps(gift.id, cleaned)
+            _uiState.update { it.copy(message = "礼物节点已更新") }
+            loadGifts()
+        }
+    }
+
+    fun setGiftProgress(gift: GiftItem, position: Int) {
+        if (position < 0 || position > gift.steps.size) return
+        runBusy {
+            repository.setGiftProgress(gift.id, position)
+            _uiState.update { it.copy(message = if (position == gift.steps.size) "礼物送达，这一阶段圆满啦" else "礼物进度已更新") }
             loadGifts()
         }
     }
 
     fun cancelGift(gift: GiftItem) {
         runBusy {
-            repository.updateGiftStatus(gift.id, "cancelled")
+            repository.cancelGift(gift.id)
             _uiState.update { it.copy(message = "兑换已取消") }
             loadGifts()
         }
@@ -650,11 +658,11 @@ class MainViewModel : ViewModel() {
             raw.contains("invalid_gift_goal", ignoreCase = true) -> "目标分数需为 1-1000000 的整数"
             raw.contains("invalid_gift_title", ignoreCase = true) -> "请填写礼物名称（最多 40 个字）"
             raw.contains("invalid_gift_kind", ignoreCase = true) -> "请选择礼物类型"
-            raw.contains("gift_already_active", ignoreCase = true) -> "已有一份礼物在进行中，完成后再兑换下一份"
+            raw.contains("gift_already_active", ignoreCase = true) -> "你已经有一份礼物在进行中，完成后再兑换下一份"
             raw.contains("gift_already_finished", ignoreCase = true) -> "这份礼物已经完成或取消了"
-            raw.contains("gift_already_shipped", ignoreCase = true) -> "礼物已发货，不能取消"
             raw.contains("cannot_cancel_other_gift", ignoreCase = true) -> "只能取消自己兑换的礼物"
-            raw.contains("gift_status_conflict", ignoreCase = true) -> "礼物状态刚刚变了，刷新后再试"
+            raw.contains("gift_steps_invalid", ignoreCase = true) -> "进度节点需为 1-8 个，每个最多 12 个字"
+            raw.contains("gift_step_out_of_range", ignoreCase = true) -> "礼物进度刚刚变了，刷新后再试"
             raw.contains("gift_not_found", ignoreCase = true) -> "礼物不存在"
             raw.contains("display_name_too_long", ignoreCase = true) -> "昵称最多 40 个字"
             raw.contains("ignoreUnknownKeys", ignoreCase = true) || raw.contains("unknown key", ignoreCase = true) -> "App 版本过旧，请更新到最新版本"

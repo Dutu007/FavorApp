@@ -200,7 +200,7 @@ fun AgreementScreen(
         )
     }
     details?.let { original ->
-        val item = state.agreements.firstOrNull { it.id == original.id } ?: original
+        val item = latestAgreement(original, state)
         AgreementDetails(
             item, snapshot, state.agreementsBusy,
             onDismiss = { details = null },
@@ -211,10 +211,7 @@ fun AgreementScreen(
     }
     if (editorOpen) {
         val source = editing
-        val latest = if (source == null) state.agreementConflictItem else source.let { item ->
-            state.agreementConflictItem?.takeIf { it.id == item.id }
-                ?: state.agreements.firstOrNull { it.id == item.id }
-        }
+        val latest = (source ?: state.agreementConflictItem)?.let { latestAgreement(it, state) }
         AgreementEditor(
             formKey = createKey, item = source, latest = latest, busy = state.agreementsBusy, error = state.agreementsError,
             onDismiss = {
@@ -228,7 +225,7 @@ fun AgreementScreen(
         )
     }
     deleting?.let { item ->
-        val latest = state.agreementConflictItem?.takeIf { it.id == item.id && it.version != item.version }
+        val latest = latestAgreement(item, state).takeIf { it.version > item.version }
         AlertDialog(
             onDismissRequest = { if (!state.agreementsBusy) deleting = null },
             title = { Text("删除约定") },
@@ -374,7 +371,7 @@ private fun AgreementEditor(
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     val titleLength = title.codePointCount(0, title.length)
     val noteLength = note.codePointCount(0, note.length)
-    val outdated = latest != null && (item == null || item.version != latest.version)
+    val outdated = latest != null && (item == null || latest.version > item.version)
     val changed = title != item?.title.orEmpty() || note != item?.note.orEmpty() || date != item?.dueDate.orEmpty()
     val close = { if (changed) confirmDiscard = true else onDismiss() }
     AgreementPageDialog(if (item == null) "添加约定" else "编辑约定", busy, close) { padding ->
@@ -486,6 +483,15 @@ private fun AgreementPageDialog(
         }
     }
 }
+
+// A detail fetch can finish after the list snapshot. Never replace an accepted
+// version with an older cached record after clearing the conflict notice.
+private fun latestAgreement(item: AgreementItem, state: AppUiState): AgreementItem =
+    listOfNotNull(
+        item,
+        state.agreements.firstOrNull { it.id == item.id },
+        state.agreementConflictItem?.takeIf { it.id == item.id },
+    ).maxBy { it.version }
 
 private fun agreementCreator(item: AgreementItem, snapshot: CoupleSnapshot): String =
     if (item.creatorId == snapshot.currentUserId) "我"

@@ -17,7 +17,7 @@ https://api.zengdeming.cn
 - Score rule changes applied only after the partner approves
 - Partner nicknames and date/keyword searchable records
 - Transactional score updates with retry protection
-- A shared agreement list with two-column cards, optional dates and multiline notes
+- A shared agreement list with single-column cards, optional dates and multiline notes
 - Either partner can edit, complete, restore or delete agreements, with conflict protection
 
 ## Android development
@@ -36,9 +36,10 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 ## Agreement list
 
 The new destination, **约定清单**, records things both partners want to do
-together. Cards are arranged in two columns. Titles are required (up to 40
-Unicode code points); notes support multiple lines (up to 2000 code points) and
-the hoped-for completion date is optional. Completed agreements remain in a
+together. Each card occupies one row and grows to fit its full title and notes.
+Titles are required (up to 40 Unicode code points). Notes support multiple lines
+(up to 2000 code points), and the hoped-for completion date is optional.
+Completed agreements remain in a
 separate view and can be restored, including undoing the latest completion.
 Deleting an agreement removes it from both partners' lists after confirmation.
 

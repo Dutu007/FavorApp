@@ -1,10 +1,8 @@
 package com.dutu007.favorapp
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -98,13 +96,12 @@ fun AgreementScreen(
             enabled = !state.agreementsBusy && !state.agreementsLoadingMore,
             modifier = Modifier.fillMaxSize(),
         ) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 104.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "agreement_header") {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("把想一起做的事，一件件变成回忆", color = MaterialTheme.colorScheme.secondary)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -126,12 +123,12 @@ fun AgreementScreen(
                     }
                 }
                 if (state.notice != null && details == null && !editorOpen && deleting == null) {
-                    item(key = "agreement_notice", span = { GridItemSpan(maxLineSpan) }) {
+                    item(key = "agreement_notice") {
                         InlineNotice(state, viewModel, Modifier.fillMaxWidth())
                     }
                 }
                 if (state.agreements.isEmpty() && !state.agreementsLoading && state.agreementsError == null) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
+                    item(key = "agreement_empty") {
                         val allFinished = !state.agreementsCompletedFilter && state.agreementsCompletedCount > 0
                         ElevatedCard(
                             modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
@@ -167,7 +164,7 @@ fun AgreementScreen(
                     )
                 }
                 if (state.agreementsHasMore) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
+                    item(key = "agreement_load_more") {
                         OutlinedButton(
                             onClick = { viewModel.loadAgreements(refresh = false) },
                             enabled = !state.agreementsLoading && !state.agreementsLoadingMore && !state.agreementsBusy,
@@ -273,26 +270,23 @@ private fun AgreementCard(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                item.title, Modifier.heightIn(min = 44.dp), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                item.title,
                 style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                 textDecoration = if (item.completed) TextDecoration.LineThrough else TextDecoration.None,
                 color = if (item.completed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 item.note.ifBlank { "留一点期待，慢慢一起实现" },
-                Modifier.heightIn(min = 60.dp), maxLines = 3, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 if (item.completed) "完成于 ${agreementTime(item.completedAt, short = true)}"
                 else item.dueDate?.let { "希望 $it" } ?: "日期待定",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Text(
                 "${agreementCreator(item, snapshot)}添加",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = item.completed, onCheckedChange = { onComplete() }, enabled = enabled)

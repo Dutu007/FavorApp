@@ -19,6 +19,8 @@ import com.dutu007.favorapp.data.ScorePreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +45,10 @@ const val AGREEMENTS_PAGE_SIZE = 40
 data class AppUiState(
     val loading: Boolean = true,
     val busy: Boolean = false,
+    val snapshotRefreshing: Boolean = false,
+    val giftsRefreshing: Boolean = false,
+    val giftHistoryRefreshing: Boolean = false,
+    val giftHistoryLoadingMore: Boolean = false,
     val authMode: AuthMode = AuthMode.SIGN_IN,
     val email: String = "",
     val password: String = "",
@@ -69,6 +75,7 @@ data class AppUiState(
     val giftGoalDraft: String = "",
     val giftHistory: List<GiftItem> = emptyList(),
     val giftHistoryTotal: Int = 0,
+    val giftHistoryHasMore: Boolean = false,
     val agreements: List<AgreementItem> = emptyList(),
     val agreementsPendingCount: Int = 0,
     val agreementsCompletedCount: Int = 0,
@@ -94,6 +101,21 @@ class MainViewModel : ViewModel() {
     private val preferences = FavorApplication.instance.getSharedPreferences("favorapp_settings", android.content.Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(AppUiState())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
+
+    private data class ReadContext(val token: String, val userId: String, val epoch: Long, val coupleId: String? = null)
+    private class ReadRequest {
+        var generation = 0L
+        var key: Any? = null
+        var context: ReadContext? = null
+        var job: Job? = null
+    }
+    private var readEpoch = 0L
+    private val snapshotRead = ReadRequest()
+    private val giftBoardRead = ReadRequest()
+    private val giftHistoryRead = ReadRequest()
+    private var giftHistoryNextOffset = 0
+    private var giftsRefreshGroup = false
+    private var giftsRefreshJob: Job? = null
 
     private data class AgreementSession(val token: String, val userId: String, val coupleId: String)
     private data class AgreementContext(val session: AgreementSession, val epoch: Long)
@@ -318,46 +340,26 @@ class MainViewModel : ViewModel() {
     }
 
     fun refreshSession() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(loading = true) }
-            if (repository.currentUserId() == null) {
-                resetAgreementSession()
-                _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null) }
-                return@launch
-            }
-            try {
-                loadSnapshot()
-                checkForUpdate()
-            } catch (error: Exception) {
-                if (error is ApiException && error.statusCode == 401) {
-                    clearAuthenticatedSession()
-                }
-                _uiState.update { it.copy(loading = false).withNotice(error.userMessage(), isError = true) }
-            }
+        val context = readContext()
+        if (context == null) {
+            clearAuthenticatedSession()
+            _uiState.update { it.copy(loading = false) }
+            return
+        }
+        if (_uiState.value.loading && _uiState.value.snapshotRefreshing) return
+        _uiState.update { it.copy(loading = true) }
+        startSnapshotRead()?.invokeOnCompletion {
+            if (isReadContextCurrent(context) && _uiState.value.authenticated) checkForUpdate()
         }
     }
 
-    fun refreshSnapshot(keyword: String = "", date: String = "", notify: Boolean = false) {
+    fun refreshSnapshot(keyword: String = "", date: String = "") {
         if (repository.currentUserId() == null) {
-            resetAgreementSession()
+            clearAuthenticatedSession()
             _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null) }
             return
         }
-        viewModelScope.launch {
-            _uiState.update { it.copy(busy = true) }
-            try {
-                loadSnapshot(keyword, date)
-                if (notify) _uiState.update { it.withNotice("刷新成功") }
-            } catch (error: Exception) {
-                if (error is ApiException && error.statusCode == 401) {
-                    clearAuthenticatedSession()
-                }
-                if (notify) _uiState.update { it.withNotice("刷新失败", isError = true) }
-                else _uiState.update { it.withNotice(error.userMessage(), isError = true) }
-            } finally {
-                _uiState.update { it.copy(busy = false) }
-            }
-        }
+        startSnapshotRead(keyword, date)
     }
 
     fun submitAuth() {
@@ -382,7 +384,9 @@ class MainViewModel : ViewModel() {
         runBusy {
             if (state.authMode == AuthMode.SIGN_IN) {
                 repository.signIn(state.email, state.password)
+                resetReadRequests()
                 resetAgreementSession()
+                _uiState.update { it.copy(loading = true) }
                 loadSnapshot()
             } else {
                 repository.signUp(state.email, state.password, state.displayName)
@@ -404,6 +408,7 @@ class MainViewModel : ViewModel() {
     fun signOut() {
         runBusy {
             repository.signOut()
+            resetReadRequests()
             resetScoreKey()
             resetAgreementSession()
             _uiState.update { AppUiState(loading = false) }
@@ -554,18 +559,26 @@ class MainViewModel : ViewModel() {
     fun setGiftNote(value: String) = _uiState.update { it.copy(giftNote = value.take(NOTE_MAX_LENGTH)) }
     fun setGiftGoalDraft(value: String) = _uiState.update { it.copy(giftGoalDraft = value.filter(Char::isDigit)) }
 
-    fun loadGifts() {
-        if (repository.currentUserId() == null) return
-        viewModelScope.launch {
+    fun loadGifts() { startGiftBoardRead() }
+
+    // The reward page needs both the score snapshot and the gift board. Keep
+    // its refresh indicator visible until both reads have settled.
+    fun refreshGifts() {
+        val context = readContext(requireCouple = true) ?: return
+        if (giftsRefreshJob?.isActive == true) return
+        giftsRefreshGroup = true
+        _uiState.update { it.copy(giftsRefreshing = true) }
+        giftsRefreshJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                val board = repository.loadGifts()
-                _uiState.update { it.copy(gifts = board) }
-            } catch (error: Exception) {
-                if (error is ApiException && error.statusCode == 401) {
-                    clearAuthenticatedSession()
+                listOfNotNull(startSnapshotRead(), startGiftBoardRead()).joinAll()
+            } finally {
+                if (isReadContextCurrent(context)) {
+                    giftsRefreshGroup = false
+                    _uiState.update { it.copy(giftsRefreshing = giftBoardRead.job?.isActive == true) }
                 }
             }
         }
+        giftsRefreshJob?.start()
     }
 
     fun saveGiftGoal() {
@@ -577,7 +590,7 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.setGiftGoal(target)
             _uiState.update { it.copy(giftGoalDraft = "").withNotice("TA 的目标已更新") }
-            loadGifts()
+            startGiftBoardRead(force = true)
         }
     }
 
@@ -590,24 +603,32 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.createGift(title, state.giftNote.trim().takeIf { it.isNotEmpty() })
             _uiState.update { it.copy(giftTitle = "", giftNote = "").withNotice("兑换已提交，等待对方确认") }
-            loadGifts()
+            startGiftBoardRead(force = true)
         }
     }
 
     // Full history screen: server-side pages of finished gifts, newest first.
-    fun loadGiftHistory(reset: Boolean) {
-        if (repository.currentUserId() == null) return
-        viewModelScope.launch {
-            try {
-                val offset = if (reset) 0 else _uiState.value.giftHistory.size
-                val page = repository.loadGiftHistory(offset, GIFT_HISTORY_PAGE_SIZE)
+    fun loadGiftHistory(reset: Boolean, force: Boolean = false) {
+        val state = _uiState.value
+        if (!reset && (state.giftHistoryRefreshing || state.giftHistoryLoadingMore || !state.giftHistoryHasMore)) return
+        val offset = if (reset) 0 else giftHistoryNextOffset
+        startRead(
+            request = giftHistoryRead, key = offset, context = readContext(requireCouple = true),
+            force = force,
+            loading = { current, active ->
+                current.copy(giftHistoryRefreshing = reset && active, giftHistoryLoadingMore = !reset && active)
+            },
+        ) { isCurrent ->
+            val page = repository.loadGiftHistory(offset, GIFT_HISTORY_PAGE_SIZE)
+            if (isCurrent()) {
+                giftHistoryNextOffset = offset + page.gifts.size
                 _uiState.update {
-                    val merged = if (reset) page.gifts else (it.giftHistory + page.gifts).distinctBy { g -> g.id }
-                    it.copy(giftHistory = merged, giftHistoryTotal = page.total)
-                }
-            } catch (error: Exception) {
-                if (error is ApiException && error.statusCode == 401) {
-                    clearAuthenticatedSession()
+                    val merged = if (offset == 0) page.gifts else (it.giftHistory + page.gifts).distinctBy { gift -> gift.id }
+                    it.copy(
+                        giftHistory = merged,
+                        giftHistoryTotal = page.total,
+                        giftHistoryHasMore = page.gifts.isNotEmpty() && giftHistoryNextOffset < page.total,
+                    )
                 }
             }
         }
@@ -618,8 +639,8 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.deleteGift(gift.id)
             _uiState.update { it.withNotice("记录已删除") }
-            loadGifts()
-            loadGiftHistory(true)
+            startGiftBoardRead(force = true)
+            loadGiftHistory(true, force = true)
         }
     }
 
@@ -631,7 +652,7 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.acceptGift(gift.id)
             _uiState.update { it.withNotice("已同意，安排一下进度节点吧") }
-            loadGifts()
+            startGiftBoardRead(force = true)
         }
     }
 
@@ -643,7 +664,7 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.updateGiftSteps(gift.id, cleaned)
             _uiState.update { it.withNotice("礼物节点已更新") }
-            loadGifts()
+            startGiftBoardRead(force = true)
         }
     }
 
@@ -652,7 +673,7 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.setGiftProgress(gift.id, position)
             _uiState.update { it.withNotice(if (position == gift.steps.size) "礼物送达，这一阶段圆满啦" else "礼物进度已更新") }
-            loadGifts()
+            startGiftBoardRead(force = true)
         }
     }
 
@@ -660,7 +681,7 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.cancelGift(gift.id)
             _uiState.update { it.withNotice("兑换已取消") }
-            loadGifts()
+            startGiftBoardRead(force = true)
         }
     }
 
@@ -716,7 +737,7 @@ class MainViewModel : ViewModel() {
                     agreementNextOffset = 0
                     agreementRevision = null
                     _uiState.update {
-                        it.copy(agreements = emptyList(), agreementsHasMore = false).withNotice("清单有更新，正在刷新")
+                        it.copy(agreements = emptyList(), agreementsHasMore = false)
                     }
                     startAgreementLoad(refresh = true, clearError = false)
                     return@launch
@@ -931,6 +952,7 @@ class MainViewModel : ViewModel() {
     private fun clearAuthenticatedSession() {
         repository.clearSession()
         resetScoreKey()
+        resetReadRequests()
         resetAgreementSession()
         _uiState.update {
             it.copy(
@@ -955,10 +977,13 @@ class MainViewModel : ViewModel() {
     }
 
     private fun runBusy(block: suspend () -> Unit) {
+        if (_uiState.value.busy) return
+        _uiState.update { it.copy(busy = true) }
         viewModelScope.launch {
-            _uiState.update { it.copy(busy = true) }
             try {
                 block()
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
                     clearAuthenticatedSession()
@@ -970,12 +995,110 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    private suspend fun loadSnapshot(keyword: String = "", date: String = "") {
-        val authenticated = repository.currentUserId() != null
-        val snapshot = repository.loadSnapshot(from = date, to = date, keyword = keyword)
-        notifyRuleDecision(snapshot)
-        _uiState.update { it.copy(loading = false, authenticated = authenticated, snapshot = snapshot) }
-        if (agreementSession != null && agreementSession != currentAgreementSession()) resetAgreementSession()
+    private fun loadSnapshot(keyword: String = "", date: String = "") {
+        startSnapshotRead(keyword, date, force = true)
+    }
+
+    private fun startSnapshotRead(keyword: String = "", date: String = "", force: Boolean = false): Job? =
+        startRead(
+            request = snapshotRead, key = keyword to date, context = readContext(), force = force,
+            loading = { current, active -> current.copy(snapshotRefreshing = active, loading = current.loading && active) },
+        ) { isCurrent ->
+            val snapshot = repository.loadSnapshot(from = date, to = date, keyword = keyword)
+            if (isCurrent()) {
+                if (_uiState.value.snapshot?.coupleId != snapshot?.coupleId) resetGiftReadRequests()
+                notifyRuleDecision(snapshot)
+                _uiState.update { it.copy(loading = false, authenticated = true, snapshot = snapshot) }
+                if (agreementSession != null && agreementSession != currentAgreementSession()) resetAgreementSession()
+            }
+        }
+
+    private fun startGiftBoardRead(force: Boolean = false): Job? =
+        startRead(
+            request = giftBoardRead, key = Unit, context = readContext(requireCouple = true), force = force,
+            loading = { current, active -> current.copy(giftsRefreshing = active || giftsRefreshGroup) },
+        ) { isCurrent ->
+            val board = repository.loadGifts()
+            if (isCurrent()) _uiState.update { it.copy(gifts = board) }
+        }
+
+    // Read requests own their loading state. A superseded request cannot clear
+    // a newer indicator or apply a response from an older account or filter.
+    private fun startRead(
+        request: ReadRequest,
+        key: Any,
+        context: ReadContext?,
+        force: Boolean = false,
+        loading: (AppUiState, Boolean) -> AppUiState,
+        block: suspend (() -> Boolean) -> Unit,
+    ): Job? {
+        context ?: return null
+        if (!force && request.job?.isActive == true && request.key == key && request.context == context) return request.job
+        invalidateRead(request)
+        request.key = key
+        request.context = context
+        val generation = request.generation
+        val isCurrent = { request.generation == generation && isReadContextCurrent(context) }
+        _uiState.update { loading(it, true) }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                block(isCurrent)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (isCurrent()) {
+                    val text = if (error is ApiException && error.statusCode == 401) {
+                        clearAuthenticatedSession()
+                        "登录已过期，请重新登录"
+                    } else error.userMessage()
+                    _uiState.update { it.withNotice(text, isError = true) }
+                }
+            } finally {
+                if (isCurrent()) _uiState.update { loading(it, false) }
+            }
+        }
+        request.job = job
+        job.start()
+        return job
+    }
+
+    private fun readContext(requireCouple: Boolean = false): ReadContext? {
+        val userId = repository.currentUserId() ?: return null
+        val coupleId = if (requireCouple) _uiState.value.snapshot?.coupleId ?: return null else null
+        return ReadContext(repository.authToken(), userId, readEpoch, coupleId)
+    }
+
+    private fun isReadContextCurrent(context: ReadContext): Boolean =
+        context.epoch == readEpoch && context.token == repository.authToken() && context.userId == repository.currentUserId() &&
+            (context.coupleId == null || context.coupleId == _uiState.value.snapshot?.coupleId)
+
+    private fun invalidateRead(request: ReadRequest) {
+        request.generation++
+        request.job?.cancel()
+        request.job = null
+        request.context = null
+    }
+
+    private fun resetGiftReadRequests() {
+        invalidateRead(giftBoardRead)
+        invalidateRead(giftHistoryRead)
+        giftsRefreshJob?.cancel()
+        giftsRefreshJob = null
+        giftsRefreshGroup = false
+        giftHistoryNextOffset = 0
+        _uiState.update {
+            it.copy(
+                gifts = null, giftHistory = emptyList(), giftHistoryTotal = 0, giftHistoryHasMore = false,
+                giftsRefreshing = false, giftHistoryRefreshing = false, giftHistoryLoadingMore = false,
+            )
+        }
+    }
+
+    private fun resetReadRequests() {
+        readEpoch++
+        invalidateRead(snapshotRead)
+        resetGiftReadRequests()
+        _uiState.update { it.copy(snapshot = null, authenticated = false, loading = false, snapshotRefreshing = false) }
     }
 
     // Show the outcome of a rule change request once per decision, remembered across restarts.

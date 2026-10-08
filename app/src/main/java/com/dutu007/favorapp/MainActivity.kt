@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
@@ -17,12 +19,16 @@ import coil.request.ImageRequest
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
@@ -186,6 +192,10 @@ private val GiftNavIcon: ImageVector = ImageVector.Builder(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+        )
         setContent { FavorTheme { FavorApp() } }
     }
 }
@@ -442,76 +452,89 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
-                    title = { Text("连接恋人", fontWeight = FontWeight.Bold) },
-                    actions = { TextButton(onClick = { showAccount = true }, enabled = !state.busy) { Text("设置") } },
+                    title = { RefreshingTitle("连接恋人", state.snapshotRefreshing) },
+                    actions = {
+                        IconButton(onClick = { viewModel.refreshSnapshot() }, enabled = !state.busy && !state.snapshotRefreshing) {
+                            Icon(RefreshIcon, contentDescription = "刷新", tint = MaterialTheme.colorScheme.primary)
+                        }
+                        IconButton(onClick = { showAccount = true }, enabled = !state.busy) {
+                            Icon(SettingsIcon, contentDescription = "设置", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
             },
         ) { padding ->
-            Column(
-                modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+            RefreshableContent(
+                isRefreshing = state.snapshotRefreshing,
+                onRefresh = { viewModel.refreshSnapshot() }, enabled = !state.busy,
+                modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding(),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    AvatarBubble("我")
-                    Text("♡", color = MaterialTheme.colorScheme.primary, fontSize = 32.sp)
-                    AvatarBubble("你")
-                }
-                Spacer(Modifier.height(24.dp))
-                Text("让两颗心，住进同一个空间", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(8.dp))
-                Spacer(Modifier.height(28.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FilterChip(selected = !receiveInvite, onClick = { receiveInvite = false; viewModel.clearNotice() }, label = { Text("邀请对方") }, enabled = !state.busy)
-                    FilterChip(selected = receiveInvite, onClick = { receiveInvite = true; viewModel.clearNotice() }, label = { Text("输入邀请码") }, enabled = !state.busy)
-                }
-                Spacer(Modifier.height(16.dp))
-                if (!receiveInvite) {
-                            PairingCard("发出一份专属邀请", "生成邀请码，复制后发送给你的恋人。") {
-                        if (state.generatedInvite != null) {
-                            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)) {
-                                Text(state.generatedInvite, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), textAlign = TextAlign.Center, fontSize = 26.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            }
-                            Spacer(Modifier.height(20.dp))
-                            PrimaryAction(if (copied) "已复制，再复制一次" else "复制邀请码", false) {
-                                clipboard.setText(AnnotatedString(state.generatedInvite))
-                                copied = true
-                            }
-                            Spacer(Modifier.height(12.dp))
-                            Text("邀请码有效期为 24 小时，只能使用一次。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                            Spacer(Modifier.height(18.dp))
-                            Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)) {
-                                Column(Modifier.padding(14.dp)) {
-                                    Text("已发出邀请", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
-                                    Spacer(Modifier.height(4.dp))
-                                    Text("对方输入邀请码后，点击下方按钮进入你们的空间。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                Column(
+                    modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        AvatarBubble("我")
+                        Text("♡", color = MaterialTheme.colorScheme.primary, fontSize = 32.sp)
+                        AvatarBubble("你")
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    Text("让两颗心，住进同一个空间", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(28.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        FilterChip(selected = !receiveInvite, onClick = { receiveInvite = false; viewModel.clearNotice() }, label = { Text("邀请对方") }, enabled = !state.busy)
+                        FilterChip(selected = receiveInvite, onClick = { receiveInvite = true; viewModel.clearNotice() }, label = { Text("输入邀请码") }, enabled = !state.busy)
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    if (!receiveInvite) {
+                                PairingCard("发出一份专属邀请", "生成邀请码，复制后发送给你的恋人。") {
+                            if (state.generatedInvite != null) {
+                                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)) {
+                                    Text(state.generatedInvite, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), textAlign = TextAlign.Center, fontSize = 26.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                 }
+                                Spacer(Modifier.height(20.dp))
+                                PrimaryAction(if (copied) "已复制，再复制一次" else "复制邀请码", false) {
+                                    clipboard.setText(AnnotatedString(state.generatedInvite))
+                                    copied = true
+                                }
+                                Spacer(Modifier.height(12.dp))
+                                Text("邀请码有效期为 24 小时，只能使用一次。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                                Spacer(Modifier.height(18.dp))
+                                Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)) {
+                                    Column(Modifier.padding(14.dp)) {
+                                        Text("已发出邀请", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
+                                        Spacer(Modifier.height(4.dp))
+                                        Text("对方输入邀请码后，点击下方按钮进入你们的空间。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                                    }
+                                }
+                                Spacer(Modifier.height(12.dp))
+                                PrimaryAction("进入我们的空间", state.busy, viewModel::enterCouple)
+                            } else {
+                                Text("匹配规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(12.dp))
+                                NumberField("初始分数", state.initialScore, viewModel::setInitialScore)
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                                    NumberField("总分下限（可选）", state.minScore, viewModel::setMinScore, Modifier.weight(1f))
+                                    NumberField("总分上限（可选）", state.maxScore, viewModel::setMaxScore, Modifier.weight(1f))
+                                }
+                                Spacer(Modifier.height(20.dp))
+                                PrimaryAction("生成专属邀请码", state.busy, viewModel::createInvite)
                             }
-                            Spacer(Modifier.height(12.dp))
-                            PrimaryAction("进入我们的空间", state.busy, viewModel::enterCouple)
-                        } else {
-                            Text("匹配规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(12.dp))
-                            NumberField("初始分数", state.initialScore, viewModel::setInitialScore)
-                            Spacer(Modifier.height(10.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                                NumberField("总分下限（可选）", state.minScore, viewModel::setMinScore, Modifier.weight(1f))
-                                NumberField("总分上限（可选）", state.maxScore, viewModel::setMaxScore, Modifier.weight(1f))
-                            }
-                            Spacer(Modifier.height(20.dp))
-                            PrimaryAction("生成专属邀请码", state.busy, viewModel::createInvite)
+                        }
+                    } else {
+                        PairingCard("接受恋人的邀请", "粘贴对方的邀请码，开启你们的共同记录。") {
+                            AppTextField(state.inviteCode, viewModel::setInviteCode, "邀请码", "♡", KeyboardType.Ascii)
+                            Spacer(Modifier.height(24.dp))
+                            PrimaryAction("连接我们的空间", state.busy, viewModel::acceptInvite)
                         }
                     }
-                } else {
-                    PairingCard("接受恋人的邀请", "粘贴对方的邀请码，开启你们的共同记录。") {
-                        AppTextField(state.inviteCode, viewModel::setInviteCode, "邀请码", "♡", KeyboardType.Ascii)
-                        Spacer(Modifier.height(24.dp))
-                        PrimaryAction("连接我们的空间", state.busy, viewModel::acceptInvite)
-                    }
+                    if (!showAccount) InlineNotice(state, viewModel)
+                    Spacer(Modifier.height(24.dp))
+                    Text("一起收藏小事 · 认真回应喜欢", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                 }
-                if (!showAccount) InlineNotice(state, viewModel)
-                Spacer(Modifier.height(24.dp))
-                Text("一起收藏小事 · 认真回应喜欢", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
             }
         }
     }
@@ -566,7 +589,23 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         directionOk && changeOk
     }
     val shownEvents = visibleEvents.take(visibleLimit)
-    LaunchedEffect(tab, keyword, date) {
+    val navigationBarHeight = 60.dp + NavigationBarDefaults.windowInsets.asPaddingValues().calculateBottomPadding()
+    val refreshing = when (tab) {
+        3 -> state.agreementsLoading
+        2 -> state.giftsRefreshing || state.snapshotRefreshing
+        else -> state.snapshotRefreshing
+    }
+    val canRefresh = !state.busy && (tab != 3 || (!state.agreementsBusy && !state.agreementsLoadingMore))
+    val refresh = {
+        when (tab) {
+            3 -> viewModel.loadAgreements()
+            2 -> viewModel.refreshGifts()
+            1 -> viewModel.refreshSnapshot(keyword = keyword, date = date)
+            else -> viewModel.refreshSnapshot()
+        }
+    }
+    LaunchedEffect(tab, keyword, date, showSettings, showGiftHistory) {
+        if (showSettings || showGiftHistory) return@LaunchedEffect
         when (tab) {
             2, 3 -> return@LaunchedEffect
             0 -> {
@@ -588,7 +627,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         Scaffold(
             containerColor = Color.Transparent,
             bottomBar = {
-                NavigationBar(modifier = Modifier.height(60.dp), containerColor = Color.White, tonalElevation = 0.dp) {
+                NavigationBar(modifier = Modifier.height(navigationBarHeight), containerColor = Color.White, tonalElevation = 0.dp) {
                     NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("♡", fontSize = 24.sp) })
                     NavigationBarItem(selected = tab == 3, onClick = { tab = 3 }, icon = { Icon(AgreementNavIcon, contentDescription = "约定清单", modifier = Modifier.size(24.dp)) })
                     NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(GiftNavIcon, contentDescription = null, modifier = Modifier.size(24.dp)) })
@@ -597,10 +636,14 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             },
             topBar = {
                 TopAppBar(
-                    title = { Text(when (tab) { 1 -> "好感度记录"; 2 -> "阶段性奖励"; 3 -> "约定清单"; else -> "我们的空间" }, fontWeight = FontWeight.Bold) },
+                    title = { RefreshingTitle(when (tab) { 1 -> "好感度记录"; 2 -> "阶段性奖励"; 3 -> "约定清单"; else -> "我们的空间" }, refreshing) },
                     actions = {
-                        TextButton(onClick = { if (tab == 3) viewModel.loadAgreements() else { viewModel.refreshSnapshot(notify = true); if (tab == 2) viewModel.loadGifts() } }, enabled = if (tab == 3) !state.agreementsBusy && !state.agreementsLoading else !state.busy) { Text("刷新") }
-                        TextButton(onClick = { showSettings = true }, enabled = !state.busy) { Text("设置") }
+                        IconButton(onClick = refresh, enabled = canRefresh && !refreshing) {
+                            Icon(RefreshIcon, contentDescription = "刷新", tint = MaterialTheme.colorScheme.primary)
+                        }
+                        IconButton(onClick = { showSettings = true }, enabled = !state.busy) {
+                            Icon(SettingsIcon, contentDescription = "设置", tint = MaterialTheme.colorScheme.primary)
+                        }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
@@ -614,143 +657,148 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                             state = if (showSettings || showGiftHistory) state.copy(notice = null) else state,
                             snapshot = snapshot,
                             viewModel = viewModel,
-                            modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding),
+                            modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding).consumeWindowInsets(padding),
                         )
                     }
-                } else LazyColumn(
-                    modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding).imePadding(),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                } else RefreshableContent(
+                    isRefreshing = refreshing, onRefresh = refresh, enabled = canRefresh,
+                    modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding(),
                 ) {
-                    if (state.notice != null && !showSettings && !showGiftHistory) {
-                        item(key = "page_notice") { InlineNotice(state, viewModel) }
-                    }
-                    if (tab == 0) {
-                        item(key = "couple_hero") { CoupleHeroCard(snapshot, viewModel) }
-                        item(key = "score_form") {
-                            PairingCard("记录一次", null) {
-                                AppTextField(note, { note = it }, "备注（可选）", "✎")
-                                Spacer(Modifier.height(16.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    NumberField("加分 / 扣分值", state.manualDelta, viewModel::setManualDelta, Modifier.weight(1f))
-                                    Button(
-                                        onClick = {
-                                            val delta = viewModel.validateManualDelta()
-                                            if (delta != null) { pendingDelta = delta; pendingNote = note.trim() }
-                                        },
-                                        enabled = !state.busy, modifier = Modifier.height(54.dp), shape = RoundedCornerShape(16.dp),
-                                    ) { Text("记录") }
-                                }
-                                if (state.scorePresets.isNotEmpty()) {
-                                    Spacer(Modifier.height(18.dp))
-                                    Text("常用记录", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-                                    Spacer(Modifier.height(8.dp))
-                                    state.scorePresets.forEach { preset ->
-                                        PresetRow(preset) {
-                                            if (viewModel.validatePresetDelta(preset.delta)) {
-                                                pendingDelta = preset.delta
-                                                pendingNote = note.trim().ifBlank { preset.label }
+                    LazyColumn(
+                        modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp),
+                    ) {
+                        if (state.notice != null && !showSettings && !showGiftHistory) {
+                            item(key = "page_notice") { InlineNotice(state, viewModel) }
+                        }
+                        if (tab == 0) {
+                            item(key = "couple_hero") { CoupleHeroCard(snapshot, viewModel) }
+                            item(key = "score_form") {
+                                PairingCard("记录一次", null) {
+                                    AppTextField(note, { note = it }, "备注（可选）", "✎")
+                                    Spacer(Modifier.height(16.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        NumberField("加分 / 扣分值", state.manualDelta, viewModel::setManualDelta, Modifier.weight(1f))
+                                        Button(
+                                            onClick = {
+                                                val delta = viewModel.validateManualDelta()
+                                                if (delta != null) { pendingDelta = delta; pendingNote = note.trim() }
+                                            },
+                                            enabled = !state.busy, modifier = Modifier.height(54.dp), shape = RoundedCornerShape(16.dp),
+                                        ) { Text("记录") }
+                                    }
+                                    if (state.scorePresets.isNotEmpty()) {
+                                        Spacer(Modifier.height(18.dp))
+                                        Text("常用记录", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                                        Spacer(Modifier.height(8.dp))
+                                        state.scorePresets.forEach { preset ->
+                                            PresetRow(preset) {
+                                                if (viewModel.validatePresetDelta(preset.delta)) {
+                                                    pendingDelta = preset.delta
+                                                    pendingNote = note.trim().ifBlank { preset.label }
+                                                }
                                             }
                                         }
                                     }
-                                }
-                                Spacer(Modifier.height(10.dp))
-                                Text("正数为加分，负数为扣分；确认后才会保存", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                            }
-                        }
-                        item(key = "recent_events_title") {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("最近的好感度记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                TextButton(onClick = { tab = 1 }) { Text("查看记录  ›") }
-                            }
-                        }
-                        if (snapshot.events.isEmpty()) item(key = "recent_events_empty") { EmptyEventsCard() }
-                        else items(snapshot.events.take(3), key = { it.id }) { EventCard(it, snapshot) }
-                    } else if (tab == 1) {
-                        item(key = "events_filter") {
-                            ElevatedCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(24.dp),
-                                colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.94f)),
-                            ) {
-                                Column(Modifier.padding(18.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("查找记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                        if (keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0) {
-                                            TextButton(onClick = { keyword = ""; date = ""; filter = 0; direction = 0 }, enabled = !state.busy) { Text("清空筛选") }
-                                        }
-                                    }
-                                    Spacer(Modifier.height(12.dp))
-                                    AppTextField(keyword, { keyword = it }, "搜索备注内容", "⌕")
                                     Spacer(Modifier.height(10.dp))
-                                    Surface(
-                                        modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) { showDatePicker = true },
-                                        shape = RoundedCornerShape(17.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                    ) {
-                                        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Text("日", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                            Spacer(Modifier.width(10.dp))
-                                            Text(
-                                                if (date.isBlank()) "按日期筛选" else date,
-                                                modifier = Modifier.weight(1f).padding(vertical = 11.dp),
-                                                color = if (date.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                                            )
-                                            if (date.isNotBlank()) {
-                                                Text("×", fontSize = 20.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.clickable { date = "" }.padding(8.dp))
-                                            }
-                                        }
-                                    }
-                                    Spacer(Modifier.height(12.dp))
-                                    FilterChipsRow(listOf("全部", "我→对方", "对方→我"), direction) { direction = it }
-                                    Spacer(Modifier.height(8.dp))
-                                    FilterChipsRow(listOf("全部", "加分", "减分"), filter) { filter = it }
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        if (visibleEvents.size >= RECORDS_SERVER_LIMIT) "最多显示最近 $RECORDS_SERVER_LIMIT 条记录，可用筛选缩小范围" else "共 ${visibleEvents.size} 条记录",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.secondary,
-                                    )
+                                    Text("正数为加分，负数为扣分；确认后才会保存", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                                 }
                             }
-                        }
-                        if (visibleEvents.isEmpty()) {
-                            item(key = "events_empty") {
-                                val filtersActive = keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0
-                                if (snapshot.events.isEmpty() && !filtersActive) EmptyEventsCard()
-                                else PairingCard("这里暂时没有记录", "试试切换其他筛选，看看你们的日常。") {}
+                            item(key = "recent_events_title") {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("最近的好感度记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = { tab = 1 }) { Text("查看记录  ›") }
+                                }
+                            }
+                            if (snapshot.events.isEmpty()) item(key = "recent_events_empty") { EmptyEventsCard() }
+                            else items(snapshot.events.take(3), key = { it.id }) { EventCard(it, snapshot) }
+                        } else if (tab == 1) {
+                            item(key = "events_filter") {
+                                ElevatedCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(24.dp),
+                                    colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+                                ) {
+                                    Column(Modifier.padding(18.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("查找记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                            if (keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0) {
+                                                TextButton(onClick = { keyword = ""; date = ""; filter = 0; direction = 0 }, enabled = !state.busy) { Text("清空筛选") }
+                                            }
+                                        }
+                                        Spacer(Modifier.height(12.dp))
+                                        AppTextField(keyword, { keyword = it }, "搜索备注内容", "⌕")
+                                        Spacer(Modifier.height(10.dp))
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) { showDatePicker = true },
+                                            shape = RoundedCornerShape(17.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                        ) {
+                                            Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Text("日", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                                Spacer(Modifier.width(10.dp))
+                                                Text(
+                                                    if (date.isBlank()) "按日期筛选" else date,
+                                                    modifier = Modifier.weight(1f).padding(vertical = 11.dp),
+                                                    color = if (date.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                                )
+                                                if (date.isNotBlank()) {
+                                                    Text("×", fontSize = 20.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.clickable { date = "" }.padding(8.dp))
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.height(12.dp))
+                                        FilterChipsRow(listOf("全部", "我→对方", "对方→我"), direction) { direction = it }
+                                        Spacer(Modifier.height(8.dp))
+                                        FilterChipsRow(listOf("全部", "加分", "减分"), filter) { filter = it }
+                                        Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            if (visibleEvents.size >= RECORDS_SERVER_LIMIT) "最多显示最近 $RECORDS_SERVER_LIMIT 条记录，可用筛选缩小范围" else "共 ${visibleEvents.size} 条记录",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                        )
+                                    }
+                                }
+                            }
+                            if (visibleEvents.isEmpty()) {
+                                item(key = "events_empty") {
+                                    val filtersActive = keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0
+                                    if (snapshot.events.isEmpty() && !filtersActive) EmptyEventsCard()
+                                    else PairingCard("这里暂时没有记录", "试试切换其他筛选，看看你们的日常。") {}
+                                }
+                            } else {
+                                items(shownEvents, key = { it.id }) { EventCard(it, snapshot) }
+                                if (visibleLimit < visibleEvents.size) {
+                                    item(key = "events_more") {
+                                        OutlinedButton(
+                                            onClick = { visibleLimit += RECORDS_PAGE_SIZE },
+                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                            shape = RoundedCornerShape(16.dp),
+                                            enabled = !state.busy,
+                                        ) { Text("加载更多（还有 ${visibleEvents.size - visibleLimit} 条）") }
+                                    }
+                                }
                             }
                         } else {
-                            items(shownEvents, key = { it.id }) { EventCard(it, snapshot) }
-                            if (visibleLimit < visibleEvents.size) {
-                                item(key = "events_more") {
-                                    OutlinedButton(
-                                        onClick = { visibleLimit += RECORDS_PAGE_SIZE },
-                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                        shape = RoundedCornerShape(16.dp),
-                                        enabled = !state.busy,
-                                    ) { Text("加载更多（还有 ${visibleEvents.size - visibleLimit} 条）") }
-                                }
-                            }
-                        }
-                    } else {
-                        item(key = "gift_goal") { GiftGoalCard(state, viewModel) }
-                        val gifts = state.gifts?.gifts.orEmpty()
-                        // Waiting-for-acceptance wishes count as in flight too:
-                        // only received/cancelled gifts are history.
-                        val mine = gifts.firstOrNull { it.requesterId == snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
-                        val theirs = gifts.firstOrNull { it.requesterId != snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
-                        if (mine == null) item(key = "gift_redeem") { GiftRedeemCard(state, viewModel) }
-                        if (mine != null) item(key = mine.id) { GiftTrackingCard(mine, state, viewModel) }
-                        if (theirs != null) item(key = theirs.id) { GiftTrackingCard(theirs, state, viewModel) }
-                        val history = gifts.filter { it.status in GIFT_FINISHED }
-                        val historyTotal = state.gifts?.historyTotal ?: history.size
-                        if (history.isNotEmpty()) {
-                            item(key = "gift_history_title") { Text("过往礼物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-                            items(history.take(3), key = { it.id }) { GiftHistoryCard(it, onClick = { giftDeleteCandidate = it }) }
-                            if (historyTotal > 3) {
-                                item(key = "gift_history_more") {
-                                    TextButton(onClick = { showGiftHistory = true }, modifier = Modifier.fillMaxWidth()) { Text("查看完整历史 ›") }
+                            item(key = "gift_goal") { GiftGoalCard(state, viewModel) }
+                            val gifts = state.gifts?.gifts.orEmpty()
+                            // Waiting-for-acceptance wishes count as in flight too:
+                            // only received/cancelled gifts are history.
+                            val mine = gifts.firstOrNull { it.requesterId == snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
+                            val theirs = gifts.firstOrNull { it.requesterId != snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
+                            if (mine == null) item(key = "gift_redeem") { GiftRedeemCard(state, viewModel) }
+                            if (mine != null) item(key = mine.id) { GiftTrackingCard(mine, state, viewModel) }
+                            if (theirs != null) item(key = theirs.id) { GiftTrackingCard(theirs, state, viewModel) }
+                            val history = gifts.filter { it.status in GIFT_FINISHED }
+                            val historyTotal = state.gifts?.historyTotal ?: history.size
+                            if (history.isNotEmpty()) {
+                                item(key = "gift_history_title") { Text("过往礼物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                                items(history.take(3), key = { it.id }) { GiftHistoryCard(it, onClick = { giftDeleteCandidate = it }) }
+                                if (historyTotal > 3) {
+                                    item(key = "gift_history_more") {
+                                        TextButton(onClick = { showGiftHistory = true }, modifier = Modifier.fillMaxWidth()) { Text("查看完整历史 ›") }
+                                    }
                                 }
                             }
                         }
@@ -1209,8 +1257,11 @@ private fun GiftHistoryCard(gift: GiftItem, onClick: (() -> Unit)? = null) {
 @Composable
 private fun GiftHistoryScreen(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     var deleteCandidate by remember { mutableStateOf<GiftItem?>(null) }
-    SettingsPageScaffold("礼物历史", onBack) { padding ->
-        LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    SettingsPageScaffold(
+        "礼物历史", onBack, isRefreshing = state.giftHistoryRefreshing,
+        onRefresh = { viewModel.loadGiftHistory(true) }, refreshEnabled = !state.busy && !state.giftHistoryLoadingMore,
+    ) { padding ->
+        LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding).consumeWindowInsets(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (state.notice != null) item { InlineNotice(state, viewModel) }
             if (state.giftHistory.isEmpty()) {
                 item {
@@ -1225,10 +1276,11 @@ private fun GiftHistoryScreen(state: AppUiState, viewModel: MainViewModel, onBac
                 }
             } else {
                 items(state.giftHistory, key = { it.id }) { GiftHistoryCard(it, onClick = { deleteCandidate = it }) }
-                if (state.giftHistory.size < state.giftHistoryTotal) {
+                if (state.giftHistoryHasMore) {
                     item {
-                        OutlinedButton(onClick = { viewModel.loadGiftHistory(false) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-                            Text("加载更多（还有 ${state.giftHistoryTotal - state.giftHistory.size} 条）")
+                        OutlinedButton(onClick = { viewModel.loadGiftHistory(false) }, enabled = !state.busy && !state.giftHistoryRefreshing && !state.giftHistoryLoadingMore, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                            if (state.giftHistoryLoadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text("加载更多记录")
                         }
                     }
                 }
@@ -1301,8 +1353,11 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     if (page == "nickname") { NicknameSettings(state, viewModel) { page = "list" }; return }
     if (page == "rules") { RulesSettings(state, viewModel) { page = "list" }; return }
     if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
-    SettingsPageScaffold("设置", onDismiss) { padding ->
-        LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    SettingsPageScaffold(
+        "设置", onDismiss, isRefreshing = state.snapshotRefreshing,
+        onRefresh = { viewModel.refreshSnapshot() }, refreshEnabled = !state.busy,
+    ) { padding ->
+        LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding).consumeWindowInsets(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (state.notice != null) item { InlineNotice(state, viewModel) }
             item { SettingsRow("我的头像", "更换或移除") { page = "avatar" } }
             item {
@@ -1347,19 +1402,31 @@ private fun FilterChipsRow(options: List<String>, selected: Int, onSelect: (Int)
 // Opaque scaffold for settings pages; drawn over HomeScreen, so it must fully cover it.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Composable BoxScope.(PaddingValues) -> Unit) {
+private fun SettingsPageScaffold(
+    title: String, onBack: () -> Unit, isRefreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null, refreshEnabled: Boolean = true,
+    content: @Composable BoxScope.(PaddingValues) -> Unit,
+) {
     AppBackground {
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
-                    title = { Text(title, fontWeight = FontWeight.Bold) },
+                    title = { RefreshingTitle(title, isRefreshing) },
                     navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } },
+                    actions = {
+                        if (onRefresh != null) IconButton(onClick = onRefresh, enabled = refreshEnabled && !isRefreshing) {
+                            Icon(RefreshIcon, contentDescription = "刷新", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
             },
         ) { padding ->
-            Box(Modifier.fillMaxSize()) { content(padding) }
+            RefreshableContent(
+                isRefreshing = isRefreshing, onRefresh = { onRefresh?.invoke() },
+                enabled = onRefresh != null && refreshEnabled, modifier = Modifier.fillMaxSize(),
+            ) { content(padding) }
         }
     }
 }
@@ -1370,8 +1437,11 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) viewModel.uploadAvatarFromUri(context, uri)
     }
-    SettingsPageScaffold("我的头像", onBack) { padding ->
-        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    SettingsPageScaffold(
+        "我的头像", onBack, isRefreshing = state.snapshotRefreshing,
+        onRefresh = { viewModel.refreshSnapshot() }, refreshEnabled = !state.busy,
+    ) { padding ->
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (myCard != null) {
                 AvatarBubble(state.snapshot.currentUserName, viewModel.avatarUrlFor(myCard.userId, myCard.avatarVersion), viewModel.authToken, size = 120.dp)
             }
@@ -1388,7 +1458,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 @Composable private fun NicknameSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     var nickname by rememberSaveable { mutableStateOf(state.snapshot?.partnerNickname.orEmpty()) }
     SettingsPageScaffold("恋人昵称", onBack) { padding ->
-        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("这是你对 TA 的专属称呼，只对你自己可见。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡")
             InlineNotice(state, viewModel)
@@ -1400,15 +1470,36 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 
 @Composable private fun RulesSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     val pending = state.snapshot?.pendingRules
+    val settings = state.snapshot?.settings
+    var addMin by rememberSaveable { mutableStateOf((settings?.addMin ?: 1).toString()) }
+    var addMax by rememberSaveable { mutableStateOf((settings?.addMax ?: 5).toString()) }
+    var subtractMin by rememberSaveable { mutableStateOf((settings?.subtractMin ?: 1).toString()) }
+    var subtractMax by rememberSaveable { mutableStateOf((settings?.subtractMax ?: 5).toString()) }
+    var draftEdited by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(settings) {
+        if (!draftEdited) {
+            addMin = (settings?.addMin ?: 1).toString()
+            addMax = (settings?.addMax ?: 5).toString()
+            subtractMin = (settings?.subtractMin ?: 1).toString()
+            subtractMax = (settings?.subtractMax ?: 5).toString()
+        }
+    }
     // Pending requests arrive through snapshot refreshes; fetch fresh state on entry.
     LaunchedEffect(Unit) { viewModel.refreshSnapshot() }
-    SettingsPageScaffold("记分规则", onBack) { padding ->
-        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    SettingsPageScaffold(
+        "记分规则", onBack, isRefreshing = state.snapshotRefreshing,
+        onRefresh = { viewModel.refreshSnapshot() }, refreshEnabled = !state.busy,
+    ) { padding ->
+        Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             InlineNotice(state, viewModel)
             if (pending != null) {
                 PendingRulesCard(state, pending, viewModel)
             } else {
-                RulesForm(state, viewModel)
+                RulesForm(
+                    state, viewModel, addMin, addMax, subtractMin, subtractMax,
+                    onAddMin = { draftEdited = true; addMin = it }, onAddMax = { draftEdited = true; addMax = it },
+                    onSubtractMin = { draftEdited = true; subtractMin = it }, onSubtractMax = { draftEdited = true; subtractMax = it },
+                )
             }
         }
     }
@@ -1437,23 +1528,23 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
     }
 }
 
-@Composable private fun RulesForm(state: AppUiState, viewModel: MainViewModel) {
-    val settings = state.snapshot?.settings
-    var addMin by rememberSaveable { mutableStateOf((settings?.addMin ?: 1).toString()) }
-    var addMax by rememberSaveable { mutableStateOf((settings?.addMax ?: 5).toString()) }
-    var subtractMin by rememberSaveable { mutableStateOf((settings?.subtractMin ?: 1).toString()) }
-    var subtractMax by rememberSaveable { mutableStateOf((settings?.subtractMax ?: 5).toString()) }
+@Composable private fun RulesForm(
+    state: AppUiState, viewModel: MainViewModel,
+    addMin: String, addMax: String, subtractMin: String, subtractMax: String,
+    onAddMin: (String) -> Unit, onAddMax: (String) -> Unit,
+    onSubtractMin: (String) -> Unit, onSubtractMax: (String) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("修改需要对方同意后才会生效，双方共用一套规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("单次加分范围（正数1~100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumberField("最小", addMin, onValueChange = { addMin = it }, Modifier.weight(1f))
-            NumberField("最大", addMax, onValueChange = { addMax = it }, Modifier.weight(1f))
+            NumberField("最小", addMin, onValueChange = onAddMin, Modifier.weight(1f))
+            NumberField("最大", addMax, onValueChange = onAddMax, Modifier.weight(1f))
         }
         Text("单次扣分范围（正数1~100）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NumberField("最小", subtractMin, onValueChange = { subtractMin = it }, Modifier.weight(1f))
-            NumberField("最大", subtractMax, onValueChange = { subtractMax = it }, Modifier.weight(1f))
+            NumberField("最小", subtractMin, onValueChange = onSubtractMin, Modifier.weight(1f))
+            NumberField("最大", subtractMax, onValueChange = onSubtractMax, Modifier.weight(1f))
         }
         PrimaryAction("请求修改", state.busy) {
             viewModel.requestRulesChange(addMin, addMax, subtractMin, subtractMax)
@@ -1463,7 +1554,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
 
 @Composable private fun PresetSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
     SettingsPageScaffold("添加记录预设", onBack) { padding ->
-        LazyColumn(Modifier.fillMaxSize().imePadding().padding(padding).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 14.dp)) {
             item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "备注，例如：乖乖早睡", "♡") }
             item { Text("备注最多 $NOTE_MAX_LENGTH 个字，常用记录最多保存 $PRESET_MAX_COUNT 条（当前 ${state.scorePresets.size}/$PRESET_MAX_COUNT）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("添加") } } }

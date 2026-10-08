@@ -92,86 +92,90 @@ fun AgreementScreen(
         editorOpen = true
     }
     Box(modifier = modifier) {
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 104.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        RefreshableContent(
+            isRefreshing = state.agreementsLoading,
+            onRefresh = { viewModel.loadAgreements() },
+            enabled = !state.agreementsBusy && !state.agreementsLoadingMore,
+            modifier = Modifier.fillMaxSize(),
         ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("把想一起做的事，一件件变成回忆", color = MaterialTheme.colorScheme.secondary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AgreementCount("待完成", state.agreementsPendingCount, Modifier.weight(1f))
-                        AgreementCount("已完成", state.agreementsCompletedCount, Modifier.weight(1f))
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FilterChip(
-                            selected = !state.agreementsCompletedFilter,
-                            onClick = { viewModel.selectAgreementFilter(false) },
-                            label = { Text("待完成") }, enabled = !state.agreementsBusy,
-                        )
-                        FilterChip(
-                            selected = state.agreementsCompletedFilter,
-                            onClick = { viewModel.selectAgreementFilter(true) },
-                            label = { Text("已完成") }, enabled = !state.agreementsBusy,
-                        )
-                    }
-                }
-            }
-            if (state.notice != null && details == null && !editorOpen && deleting == null) {
-                item(key = "agreement_notice", span = { GridItemSpan(maxLineSpan) }) {
-                    InlineNotice(state, viewModel, Modifier.fillMaxWidth())
-                }
-            }
-            if (state.agreementsLoading) {
-                item(span = { GridItemSpan(maxLineSpan) }) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            }
-            if (state.agreements.isEmpty() && !state.agreementsLoading && state.agreementsError == null) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 104.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    val allFinished = !state.agreementsCompletedFilter && state.agreementsCompletedCount > 0
-                    ElevatedCard(
-                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.94f)),
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("♡", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.height(12.dp))
-                            Text(
-                                if (allFinished) "这些约定，都变成了我们的回忆"
-                                else if (state.agreementsCompletedFilter) "还没有完成的约定"
-                                else "写下第一件想一起做的事吧",
-                                fontWeight = FontWeight.Bold,
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("把想一起做的事，一件件变成回忆", color = MaterialTheme.colorScheme.secondary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            AgreementCount("待完成", state.agreementsPendingCount, Modifier.weight(1f))
+                            AgreementCount("已完成", state.agreementsCompletedCount, Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            FilterChip(
+                                selected = !state.agreementsCompletedFilter,
+                                onClick = { viewModel.selectAgreementFilter(false) },
+                                label = { Text("待完成") }, enabled = !state.agreementsBusy,
                             )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                if (state.agreementsCompletedFilter) "一起完成后，回忆会留在这里"
-                                else "看海、做一顿饭，或一起度过普通的一天",
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary,
+                            FilterChip(
+                                selected = state.agreementsCompletedFilter,
+                                onClick = { viewModel.selectAgreementFilter(true) },
+                                label = { Text("已完成") }, enabled = !state.agreementsBusy,
                             )
-                            if (!state.agreementsCompletedFilter) {
-                                TextButton(onClick = { openEditor(null) }, enabled = !state.agreementsBusy) { Text("添加约定") }
+                        }
+                    }
+                }
+                if (state.notice != null && details == null && !editorOpen && deleting == null) {
+                    item(key = "agreement_notice", span = { GridItemSpan(maxLineSpan) }) {
+                        InlineNotice(state, viewModel, Modifier.fillMaxWidth())
+                    }
+                }
+                if (state.agreements.isEmpty() && !state.agreementsLoading && state.agreementsError == null) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        val allFinished = !state.agreementsCompletedFilter && state.agreementsCompletedCount > 0
+                        ElevatedCard(
+                            modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
+                            colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.94f)),
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("♡", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    if (allFinished) "这些约定，都变成了我们的回忆"
+                                    else if (state.agreementsCompletedFilter) "还没有完成的约定"
+                                    else "写下第一件想一起做的事吧",
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    if (state.agreementsCompletedFilter) "一起完成后，回忆会留在这里"
+                                    else "看海、做一顿饭，或一起度过普通的一天",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary,
+                                )
+                                if (!state.agreementsCompletedFilter) {
+                                    TextButton(onClick = { openEditor(null) }, enabled = !state.agreementsBusy) { Text("添加约定") }
+                                }
                             }
                         }
                     }
                 }
-            }
-            items(state.agreements, key = { it.id }) { item ->
-                AgreementCard(
-                    item, snapshot, enabled = !state.agreementsBusy && !state.agreementsLoading,
-                    onOpen = { details = item },
-                    onComplete = { viewModel.setAgreementCompleted(item, !item.completed) },
-                )
-            }
-            if (state.agreementsHasMore) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    OutlinedButton(
-                        onClick = { viewModel.loadAgreements(refresh = false) },
-                        enabled = !state.agreementsLoading && !state.agreementsLoadingMore && !state.agreementsBusy,
-                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
-                    ) {
-                        if (state.agreementsLoadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        else Text("加载更多约定")
+                items(state.agreements, key = { it.id }) { item ->
+                    AgreementCard(
+                        item, snapshot, enabled = !state.agreementsBusy && !state.agreementsLoading,
+                        onOpen = { details = item },
+                        onComplete = { viewModel.setAgreementCompleted(item, !item.completed) },
+                    )
+                }
+                if (state.agreementsHasMore) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        OutlinedButton(
+                            onClick = { viewModel.loadAgreements(refresh = false) },
+                            enabled = !state.agreementsLoading && !state.agreementsLoadingMore && !state.agreementsBusy,
+                            modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                        ) {
+                            if (state.agreementsLoadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text("加载更多约定")
+                        }
                     }
                 }
             }
@@ -309,7 +313,8 @@ private fun AgreementDetails(
         TextButton(onClick = onEdit, enabled = !busy) { Text("编辑") }
     }) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
+            Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
+                .verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             notice()
@@ -353,7 +358,8 @@ private fun AgreementEditor(
     val close = { if (changed) confirmDiscard = true else onDismiss() }
     AgreementPageDialog(if (item == null) "添加约定" else "编辑约定", busy, close) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
+            Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()
+                .verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             notice()

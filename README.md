@@ -47,6 +47,13 @@ They disappear after three seconds, or five seconds for errors and completion
 messages with an undo action (longer when requested by accessibility settings).
 Completion shows one message; dismissing it also removes its undo action.
 
+Server-backed pages can refresh with the circular-arrow toolbar icon or a pull
+gesture at the top of the list. Refresh progress appears beside the page title
+as a light-weight `（刷新中...）` label, cycling through one to three dots. Record
+refreshes preserve the current search and date filters. Settings uses a matching
+outline gear icon. Scaffold padding is consumed before keyboard padding so the
+same bottom space is not reserved twice when typing.
+
 The list refreshes on entry, on returning to the foreground and on manual
 refresh. Records are scoped to the active couple. Version checks prevent silent
 overwrites, and creation keys prevent duplicate records after network retries.

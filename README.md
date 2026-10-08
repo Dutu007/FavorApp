@@ -28,6 +28,9 @@ https://api.zengdeming.cn
 4. Keep `api.baseUrl=https://api.zengdeming.cn` unless using a local API.
 5. Run the `app` configuration or build `assembleDebug`.
 
+Run `testDebugUnitTest lintDebug assembleDebug` to check the Android app before
+merging; the Android workflow runs the same checks.
+
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Agreement list
@@ -38,6 +41,11 @@ Unicode code points); notes support multiple lines (up to 2000 code points) and
 the hoped-for completion date is optional. Completed agreements remain in a
 separate view and can be restored, including undoing the latest completion.
 Deleting an agreement removes it from both partners' lists after confirmation.
+
+App messages float at the center of the screen without changing page layout.
+They disappear after three seconds, or five seconds for errors and completion
+messages with an undo action (longer when requested by accessibility settings).
+Completion shows one message; dismissing it also removes its undo action.
 
 The list refreshes on entry, on returning to the foreground and on manual
 refresh. Records are scoped to the active couple. Version checks prevent silent

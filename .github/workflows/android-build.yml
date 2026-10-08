@@ -58,8 +58,8 @@ jobs:
           api.baseUrl=https://api.zengdeming.cn
           EOF
 
-      - name: Assemble debug APK
-        run: gradle assembleDebug
+      - name: Check and assemble debug APK
+        run: gradle testDebugUnitTest lintDebug assembleDebug
 
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4

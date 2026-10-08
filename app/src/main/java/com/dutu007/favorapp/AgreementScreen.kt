@@ -119,26 +119,6 @@ fun AgreementScreen(
                     }
                 }
             }
-            state.agreementsError?.let { error ->
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    AgreementNotice(error, isError = true, onDismiss = viewModel::clearAgreementError)
-                }
-            }
-            if (state.agreementUndo != null) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                        Row(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("我们完成啦", Modifier.weight(1f), color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            TextButton(onClick = viewModel::undoLastAgreementCompletion, enabled = !state.agreementsBusy) { Text("撤销") }
-                            TextButton(onClick = viewModel::clearAgreementUndo, enabled = !state.agreementsBusy) { Text("关闭") }
-                        }
-                    }
-                }
-            } else state.agreementsMessage?.let { message ->
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    AgreementNotice(message, onDismiss = viewModel::clearAgreementNotice)
-                }
-            }
             if (state.agreementsLoading) {
                 item(span = { GridItemSpan(maxLineSpan) }) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }
@@ -213,7 +193,7 @@ fun AgreementScreen(
         val source = editing
         val latest = (source ?: state.agreementConflictItem)?.let { latestAgreement(it, state) }
         AgreementEditor(
-            formKey = createKey, item = source, latest = latest, busy = state.agreementsBusy, error = state.agreementsError,
+            formKey = createKey, item = source, latest = latest, busy = state.agreementsBusy,
             onDismiss = {
                 editorOpen = false; editing = null
                 viewModel.clearAgreementError(); viewModel.clearAgreementConflict()
@@ -233,7 +213,6 @@ fun AgreementScreen(
                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(item.title, fontWeight = FontWeight.SemiBold)
                     Text("删除后，你们双方的清单都会移除这条约定，且无法恢复。")
-                    state.agreementsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     if (latest != null) {
                         Text("更新后的约定：${latest.title}", fontWeight = FontWeight.SemiBold)
                         Text(latest.note, style = MaterialTheme.typography.bodySmall)
@@ -262,23 +241,6 @@ private fun AgreementCount(label: String, count: Int, modifier: Modifier) {
         Column(Modifier.padding(16.dp)) {
             Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
             Text("$count 件", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-@Composable
-private fun AgreementNotice(text: String, isError: Boolean = false, onDismiss: (() -> Unit)? = null) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
-    ) {
-        Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text, Modifier.weight(1f).padding(vertical = 12.dp),
-                color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (onDismiss != null) TextButton(onClick = onDismiss) { Text("关闭") }
         }
     }
 }
@@ -360,7 +322,7 @@ private fun AgreementDetails(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AgreementEditor(
-    formKey: String, item: AgreementItem?, latest: AgreementItem?, busy: Boolean, error: String?,
+    formKey: String, item: AgreementItem?, latest: AgreementItem?, busy: Boolean,
     onDismiss: () -> Unit, onUseLatest: (AgreementItem) -> Unit,
     onSave: (String, String, String) -> Unit,
 ) {
@@ -380,7 +342,6 @@ private fun AgreementEditor(
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Text("记下已经商量好、想一起完成的事情", color = MaterialTheme.colorScheme.secondary)
-            if (error != null) AgreementNotice(error, isError = true)
             if (outdated) {
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

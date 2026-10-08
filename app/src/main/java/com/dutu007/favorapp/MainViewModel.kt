@@ -79,19 +79,13 @@ data class AppUiState(
     val agreementsLoadingMore: Boolean = false,
     val agreementsBusy: Boolean = false,
     val agreementsError: String? = null,
-    val agreementsMessage: String? = null,
-    val agreementUndo: AgreementItem? = null,
     val agreementConflictItem: AgreementItem? = null,
     val agreementSavedFormKey: String? = null,
     val agreementDeletedId: String? = null,
-    val message: String? = null,
-    val error: String? = null,
-    val flash: String? = null,
-    val flashError: Boolean = false,
+    val notice: AppNotice? = null,
     val updateAvailable: AppRelease? = null,
     val updateDownloading: Boolean = false,
     val updateProgress: Int = 0,
-    val updateError: String? = null,
     val updateReadyPath: String? = null,
 )
 
@@ -116,7 +110,7 @@ class MainViewModel : ViewModel() {
         refreshSession()
     }
 
-    fun setAuthMode(mode: AuthMode) = _uiState.update { it.copy(authMode = mode, confirmPassword = "", error = null, message = null) }
+    fun setAuthMode(mode: AuthMode) = _uiState.update { it.copy(authMode = mode, confirmPassword = "") }
     fun setEmail(value: String) = _uiState.update { it.copy(email = value.lowercase()) }
     fun setPassword(value: String) = _uiState.update { it.copy(password = value) }
     fun setConfirmPassword(value: String) = _uiState.update { it.copy(confirmPassword = value) }
@@ -136,36 +130,36 @@ class MainViewModel : ViewModel() {
         val state = _uiState.value
         val label = state.presetLabel.trim()
         val delta = state.presetDelta.toIntOrNull()
-        if (label.isBlank()) { _uiState.update { it.copy(error = "请填写备注内容") }; return }
-        if (label.length > NOTE_MAX_LENGTH) { _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }; return }
-        if (delta == null || delta == 0) { _uiState.update { it.copy(error = "请填写加分或扣分值，负数表示扣分") }; return }
+        if (label.isBlank()) { _uiState.update { it.withNotice("请填写备注内容", isError = true) }; return }
+        if (label.length > NOTE_MAX_LENGTH) { _uiState.update { it.withNotice("备注最多 $NOTE_MAX_LENGTH 个字", isError = true) }; return }
+        if (delta == null || delta == 0) { _uiState.update { it.withNotice("请填写加分或扣分值，负数表示扣分", isError = true) }; return }
         if (!validatePresetDelta(delta)) { return }
-        if (state.scorePresets.size >= PRESET_MAX_COUNT) { _uiState.update { it.copy(error = "常用记录最多保存 $PRESET_MAX_COUNT 条") }; return }
+        if (state.scorePresets.size >= PRESET_MAX_COUNT) { _uiState.update { it.withNotice("常用记录最多保存 $PRESET_MAX_COUNT 条", isError = true) }; return }
         savePresets(state.scorePresets + ScorePreset(UUID.randomUUID().toString(), label, delta))
-        _uiState.update { it.copy(presetLabel = "", presetDelta = "", message = "预设项已添加", error = null) }
+        _uiState.update { it.copy(presetLabel = "", presetDelta = "").withNotice("预设项已添加") }
     }
     fun removePreset(id: String) {
         savePresets(_uiState.value.scorePresets.filterNot { it.id == id })
-        _uiState.update { it.copy(message = "预设项已删除", error = null) }
+        _uiState.update { it.withNotice("预设项已删除") }
     }
     fun validateManualDelta(): Int? {
         val settings = _uiState.value.snapshot?.settings
         val value = _uiState.value.manualDelta.toIntOrNull()
         if (value == null || value == 0) {
-            _uiState.update { it.copy(error = "请输入加分或扣分值，负数表示扣分") }; return null
+            _uiState.update { it.withNotice("请输入加分或扣分值，负数表示扣分", isError = true) }; return null
         }
         if (settings == null) return value
         if (!deltaWithinRules(value, settings)) {
-            _uiState.update { it.copy(error = deltaRangeError(value, settings)) }; return null
+            _uiState.update { it.withNotice(deltaRangeError(value, settings), isError = true) }; return null
         }
         return value
     }
     fun validatePresetDelta(delta: Int): Boolean {
         val settings = _uiState.value.snapshot?.settings
-        if (delta == 0) { _uiState.update { it.copy(error = "预设分值不能为 0") }; return false }
+        if (delta == 0) { _uiState.update { it.withNotice("预设分值不能为 0", isError = true) }; return false }
         if (settings == null) return true
         if (!deltaWithinRules(delta, settings)) {
-            _uiState.update { it.copy(error = deltaRangeError(delta, settings)) }; return false
+            _uiState.update { it.withNotice(deltaRangeError(delta, settings), isError = true) }; return false
         }
         return true
     }
@@ -194,12 +188,13 @@ class MainViewModel : ViewModel() {
         preferences.edit().putString("score_presets", array.toString()).apply()
         _uiState.update { it.copy(scorePresets = presets) }
     }
-    fun clearNotice() = _uiState.update { it.copy(message = null, error = null, flash = null, flashError = false) }
+    fun clearNotice() = _uiState.update { it.copy(notice = null) }
+    fun dismissNotice(id: String) = _uiState.update { it.withoutNotice(id) }
 
     fun savePartnerNickname(nickname: String): Boolean {
         val value = nickname.trim()
-        if (value.length > 8) { _uiState.update { it.copy(error = "昵称最多 8 个字") }; return false }
-        runBusy { repository.updateNickname(value); _uiState.update { it.copy(message = "恋人昵称已保存") }; loadSnapshot() }
+        if (value.length > 8) { _uiState.update { it.withNotice("昵称最多 8 个字", isError = true) }; return false }
+        runBusy { repository.updateNickname(value); _uiState.update { it.withNotice("恋人昵称已保存") }; loadSnapshot() }
         return true
     }
 
@@ -212,28 +207,28 @@ class MainViewModel : ViewModel() {
             try {
                 val release = repository.latestRelease()
                 if (release.versionCode > com.dutu007.favorapp.BuildConfig.VERSION_CODE) {
-                    _uiState.update { it.copy(updateAvailable = release, updateError = null) }
+                    _uiState.update { it.copy(updateAvailable = release) }
                 } else if (manual) {
-                    _uiState.update { it.copy(message = "已是最新版本 $currentVersionName") }
+                    _uiState.update { it.withNotice("已是最新版本 $currentVersionName") }
                 }
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) clearAuthenticatedSession()
                 if (manual) {
                     val text = if (error is ApiException && error.statusCode == 404) "服务器还没有可下载的版本" else error.userMessage()
-                    _uiState.update { it.copy(error = text) }
+                    _uiState.update { it.withNotice(text, isError = true) }
                 }
             }
         }
     }
 
-    fun dismissUpdate() = _uiState.update { it.copy(updateAvailable = null, updateError = null) }
+    fun dismissUpdate() = _uiState.update { it.copy(updateAvailable = null) }
 
-    fun noteInstallPermissionNeeded() = _uiState.update { it.copy(updateError = "请先允许安装未知应用，返回后再点一次“立即更新”") }
+    fun noteInstallPermissionNeeded() = _uiState.update { it.withNotice("请先允许安装未知应用，返回后再点一次“立即更新”", isError = true) }
 
     fun downloadUpdate(context: Context) {
         val release = _uiState.value.updateAvailable ?: return
         viewModelScope.launch {
-            _uiState.update { it.copy(updateDownloading = true, updateProgress = 0, updateError = null) }
+            _uiState.update { it.copy(updateDownloading = true, updateProgress = 0) }
             try {
                 val dir = java.io.File(context.cacheDir, "updates").apply {
                     mkdirs()
@@ -248,7 +243,7 @@ class MainViewModel : ViewModel() {
                 _uiState.update { it.copy(updateDownloading = false, updateReadyPath = target.absolutePath, updateAvailable = null) }
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) clearAuthenticatedSession()
-                _uiState.update { it.copy(updateDownloading = false, updateError = error.message ?: "下载失败，请稍后重试") }
+                _uiState.update { it.copy(updateDownloading = false).withNotice(error.message ?: "下载失败，请稍后重试", isError = true) }
             }
         }
     }
@@ -259,11 +254,11 @@ class MainViewModel : ViewModel() {
         runBusy {
             val bytes = withContext(Dispatchers.IO) { processAvatar(context, uri) }
             if (bytes == null) {
-                _uiState.update { it.copy(error = "无法读取所选图片，换一张试试") }
+                _uiState.update { it.withNotice("无法读取所选图片，换一张试试", isError = true) }
                 return@runBusy
             }
             repository.uploadAvatar(bytes)
-            _uiState.update { it.copy(message = "头像已更新") }
+            _uiState.update { it.withNotice("头像已更新") }
             loadSnapshot()
         }
     }
@@ -271,7 +266,7 @@ class MainViewModel : ViewModel() {
     fun deleteAvatar() {
         runBusy {
             repository.deleteAvatar()
-            _uiState.update { it.copy(message = "头像已移除") }
+            _uiState.update { it.withNotice("头像已移除") }
             loadSnapshot()
         }
     }
@@ -324,10 +319,10 @@ class MainViewModel : ViewModel() {
 
     fun refreshSession() {
         viewModelScope.launch {
-            _uiState.update { it.copy(loading = true, error = null) }
+            _uiState.update { it.copy(loading = true) }
             if (repository.currentUserId() == null) {
                 resetAgreementSession()
-                _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
+                _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null) }
                 return@launch
             }
             try {
@@ -337,7 +332,7 @@ class MainViewModel : ViewModel() {
                 if (error is ApiException && error.statusCode == 401) {
                     clearAuthenticatedSession()
                 }
-                _uiState.update { it.copy(loading = false, error = error.userMessage()) }
+                _uiState.update { it.copy(loading = false).withNotice(error.userMessage(), isError = true) }
             }
         }
     }
@@ -345,20 +340,20 @@ class MainViewModel : ViewModel() {
     fun refreshSnapshot(keyword: String = "", date: String = "", notify: Boolean = false) {
         if (repository.currentUserId() == null) {
             resetAgreementSession()
-            _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
+            _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null) }
             return
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(busy = true, error = null, message = null, flash = null, flashError = false) }
+            _uiState.update { it.copy(busy = true) }
             try {
                 loadSnapshot(keyword, date)
-                if (notify) _uiState.update { it.copy(flash = "刷新成功", flashError = false) }
+                if (notify) _uiState.update { it.withNotice("刷新成功") }
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
                     clearAuthenticatedSession()
                 }
-                if (notify) _uiState.update { it.copy(flash = "刷新失败", flashError = true) }
-                else _uiState.update { it.copy(error = error.userMessage()) }
+                if (notify) _uiState.update { it.withNotice("刷新失败", isError = true) }
+                else _uiState.update { it.withNotice(error.userMessage(), isError = true) }
             } finally {
                 _uiState.update { it.copy(busy = false) }
             }
@@ -368,19 +363,19 @@ class MainViewModel : ViewModel() {
     fun submitAuth() {
         val state = _uiState.value
         if (!state.email.matches(Regex("^[a-z][a-z0-9_]{2,19}$"))) {
-            _uiState.update { it.copy(error = "账号需为 3-20 位字母、数字或下划线，且以字母开头") }
+            _uiState.update { it.withNotice("账号需为 3-20 位字母、数字或下划线，且以字母开头", isError = true) }
             return
         }
         if (state.password.length !in 8..64 || !state.password.any { it.isUpperCase() } || !state.password.any { it.isLowerCase() } || !state.password.any { it.isDigit() } || state.password.all { it.isLetterOrDigit() }) {
-            _uiState.update { it.copy(error = "密码需为 8-64 位，并包含大写字母、小写字母、数字和特殊字符") }
+            _uiState.update { it.withNotice("密码需为 8-64 位，并包含大写字母、小写字母、数字和特殊字符", isError = true) }
             return
         }
         if (state.authMode == AuthMode.SIGN_UP && state.displayName.isBlank()) {
-            _uiState.update { it.copy(error = "注册时请填写昵称") }
+            _uiState.update { it.withNotice("注册时请填写昵称", isError = true) }
             return
         }
         if (state.authMode == AuthMode.SIGN_UP && state.password != state.confirmPassword) {
-            _uiState.update { it.copy(error = "两次输入的密码不一致") }
+            _uiState.update { it.withNotice("两次输入的密码不一致", isError = true) }
             return
         }
 
@@ -398,11 +393,9 @@ class MainViewModel : ViewModel() {
                         password = "",
                         confirmPassword = "",
                         displayName = "",
-                        message = "注册成功，请使用新账号登录",
-                        error = null,
                         authenticated = false,
                         snapshot = null,
-                    )
+                    ).withNotice("注册成功，请使用新账号登录")
                 }
             }
         }
@@ -428,47 +421,47 @@ class MainViewModel : ViewModel() {
         val min = state.minScore.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
         val max = state.maxScore.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
         if (initial == null || (state.minScore.isNotBlank() && min == null) || (state.maxScore.isNotBlank() && max == null)) {
-            _uiState.update { it.copy(error = "请完整填写分数规则") }; return
+            _uiState.update { it.withNotice("请完整填写分数规则", isError = true) }; return
         }
         if ((min != null && max != null && min > max) || (min != null && initial < min) || (max != null && initial > max)) {
-            _uiState.update { it.copy(error = "初始分数必须在总分上下限内") }; return
+            _uiState.update { it.withNotice("初始分数必须在总分上下限内", isError = true) }; return
         }
         val addMin = state.addMin.toIntOrNull()
         val addMax = state.addMax.toIntOrNull()
         val subtractMin = state.subtractMin.toIntOrNull()
         val subtractMax = state.subtractMax.toIntOrNull()
         if (addMin == null || addMax == null || subtractMin == null || subtractMax == null) {
-            _uiState.update { it.copy(error = "请填写单次加分和扣分范围") }; return
+            _uiState.update { it.withNotice("请填写单次加分和扣分范围", isError = true) }; return
         }
         if (addMin !in 1..100 || addMax !in addMin..100) {
-            _uiState.update { it.copy(error = "单次加分绝对值范围需为 1-100，且最小值不能大于最大值") }; return
+            _uiState.update { it.withNotice("单次加分绝对值范围需为 1-100，且最小值不能大于最大值", isError = true) }; return
         }
         if (subtractMin !in 1..100 || subtractMax !in subtractMin..100) {
-            _uiState.update { it.copy(error = "单次扣分绝对值范围需为 1-100，且最小值不能大于最大值") }; return
+            _uiState.update { it.withNotice("单次扣分绝对值范围需为 1-100，且最小值不能大于最大值", isError = true) }; return
         }
         val rules = ScoreRule(initial, min, max, addMin, addMax, subtractMin, subtractMax)
         runBusy {
             val code = repository.createInvite(rules)
-            _uiState.update { it.copy(generatedInvite = code, message = "邀请码已生成，复制后发送给对方") }
+            _uiState.update { it.copy(generatedInvite = code).withNotice("邀请码已生成，复制后发送给对方") }
         }
     }
 
     fun enterCouple() {
         refreshSnapshot()
         if (_uiState.value.snapshot == null) {
-            _uiState.update { it.copy(message = "还在等待对方输入邀请码，请稍后再试") }
+            _uiState.update { it.withNotice("还在等待对方输入邀请码，请稍后再试") }
         }
     }
 
     fun acceptInvite() {
         val code = _uiState.value.inviteCode.trim()
         if (code.isBlank()) {
-            _uiState.update { it.copy(error = "请输入邀请码") }
+            _uiState.update { it.withNotice("请输入邀请码", isError = true) }
             return
         }
         runBusy {
             repository.acceptInvite(code)
-            _uiState.update { it.copy(inviteCode = "", generatedInvite = null, message = "匹配成功") }
+            _uiState.update { it.copy(inviteCode = "", generatedInvite = null).withNotice("匹配成功") }
             loadSnapshot()
         }
     }
@@ -482,11 +475,11 @@ class MainViewModel : ViewModel() {
         val snapshot = _uiState.value.snapshot ?: return
         val partner = snapshot.cards.firstOrNull { it.userId != snapshot.currentUserId }
         if (partner == null) {
-            _uiState.update { it.copy(error = "暂时找不到恋人账户") }
+            _uiState.update { it.withNotice("暂时找不到恋人账户", isError = true) }
             return
         }
         if (note != null && note.length > NOTE_MAX_LENGTH) {
-            _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }
+            _uiState.update { it.withNotice("备注最多 $NOTE_MAX_LENGTH 个字", isError = true) }
             return
         }
         val action = delta to note?.trim()
@@ -509,20 +502,20 @@ class MainViewModel : ViewModel() {
         val subtractMin = subtractMinText.toIntOrNull()
         val subtractMax = subtractMaxText.toIntOrNull()
         if (addMin == null || addMax == null || subtractMin == null || subtractMax == null) {
-            _uiState.update { it.copy(error = "单次加减分范围必须是整数") }
+            _uiState.update { it.withNotice("单次加减分范围必须是整数", isError = true) }
             return false
         }
         if (addMin !in 1..100 || addMax !in addMin..100) {
-            _uiState.update { it.copy(error = "单次加分范围需为正数1~100，且最小值不能大于最大值") }
+            _uiState.update { it.withNotice("单次加分范围需为正数1~100，且最小值不能大于最大值", isError = true) }
             return false
         }
         if (subtractMin !in 1..100 || subtractMax !in subtractMin..100) {
-            _uiState.update { it.copy(error = "单次扣分范围需为正数1~100，且最小值不能大于最大值") }
+            _uiState.update { it.withNotice("单次扣分范围需为正数1~100，且最小值不能大于最大值", isError = true) }
             return false
         }
         runBusy {
             repository.createRulesRequest(addMin, addMax, subtractMin, subtractMax)
-            _uiState.update { it.copy(message = "修改请求已发送，等待对方同意") }
+            _uiState.update { it.withNotice("修改请求已发送，等待对方同意") }
             loadSnapshot()
         }
         return true
@@ -532,7 +525,7 @@ class MainViewModel : ViewModel() {
         val id = _uiState.value.snapshot?.pendingRules?.id ?: return
         runBusy {
             repository.acceptRulesRequest(id)
-            _uiState.update { it.copy(message = "已同意对方的记分规则修改") }
+            _uiState.update { it.withNotice("已同意对方的记分规则修改") }
             loadSnapshot()
         }
     }
@@ -541,7 +534,7 @@ class MainViewModel : ViewModel() {
         val id = _uiState.value.snapshot?.pendingRules?.id ?: return
         runBusy {
             repository.rejectRulesRequest(id)
-            _uiState.update { it.copy(message = "已拒绝对方的记分规则修改") }
+            _uiState.update { it.withNotice("已拒绝对方的记分规则修改") }
             loadSnapshot()
         }
     }
@@ -550,7 +543,7 @@ class MainViewModel : ViewModel() {
         val id = _uiState.value.snapshot?.pendingRules?.id ?: return
         runBusy {
             repository.cancelRulesRequest(id)
-            _uiState.update { it.copy(message = "修改请求已撤销") }
+            _uiState.update { it.withNotice("修改请求已撤销") }
             loadSnapshot()
         }
     }
@@ -578,12 +571,12 @@ class MainViewModel : ViewModel() {
     fun saveGiftGoal() {
         val target = _uiState.value.giftGoalDraft.toIntOrNull()
         if (target == null || target !in 1..1000000) {
-            _uiState.update { it.copy(error = "目标分数需为 1-1000000 的整数") }
+            _uiState.update { it.withNotice("目标分数需为 1-1000000 的整数", isError = true) }
             return
         }
         runBusy {
             repository.setGiftGoal(target)
-            _uiState.update { it.copy(giftGoalDraft = "", message = "TA 的目标已更新") }
+            _uiState.update { it.copy(giftGoalDraft = "").withNotice("TA 的目标已更新") }
             loadGifts()
         }
     }
@@ -591,12 +584,12 @@ class MainViewModel : ViewModel() {
     fun submitGiftRedemption() {
         val state = _uiState.value
         val title = state.giftTitle.trim()
-        if (title.isEmpty()) { _uiState.update { it.copy(error = "请填写想要的礼物") }; return }
-        if (title.length > 40) { _uiState.update { it.copy(error = "礼物名称最多 40 个字") }; return }
-        if (state.giftNote.length > NOTE_MAX_LENGTH) { _uiState.update { it.copy(error = "备注最多 $NOTE_MAX_LENGTH 个字") }; return }
+        if (title.isEmpty()) { _uiState.update { it.withNotice("请填写想要的礼物", isError = true) }; return }
+        if (title.length > 40) { _uiState.update { it.withNotice("礼物名称最多 40 个字", isError = true) }; return }
+        if (state.giftNote.length > NOTE_MAX_LENGTH) { _uiState.update { it.withNotice("备注最多 $NOTE_MAX_LENGTH 个字", isError = true) }; return }
         runBusy {
             repository.createGift(title, state.giftNote.trim().takeIf { it.isNotEmpty() })
-            _uiState.update { it.copy(giftTitle = "", giftNote = "", message = "兑换已提交，等待对方确认") }
+            _uiState.update { it.copy(giftTitle = "", giftNote = "").withNotice("兑换已提交，等待对方确认") }
             loadGifts()
         }
     }
@@ -624,7 +617,7 @@ class MainViewModel : ViewModel() {
     fun deleteGift(gift: GiftItem) {
         runBusy {
             repository.deleteGift(gift.id)
-            _uiState.update { it.copy(message = "记录已删除") }
+            _uiState.update { it.withNotice("记录已删除") }
             loadGifts()
             loadGiftHistory(true)
         }
@@ -637,19 +630,19 @@ class MainViewModel : ViewModel() {
     fun acceptGift(gift: GiftItem) {
         runBusy {
             repository.acceptGift(gift.id)
-            _uiState.update { it.copy(message = "已同意，安排一下进度节点吧") }
+            _uiState.update { it.withNotice("已同意，安排一下进度节点吧") }
             loadGifts()
         }
     }
 
     fun updateGiftSteps(gift: GiftItem, labels: List<String>) {
         val cleaned = labels.map { it.trim() }.filter { it.isNotEmpty() }
-        if (cleaned.isEmpty()) { _uiState.update { it.copy(error = "至少保留一个进度节点") }; return }
-        if (cleaned.size > 8) { _uiState.update { it.copy(error = "节点最多 8 个") }; return }
-        if (cleaned.any { it.length > 12 }) { _uiState.update { it.copy(error = "节点文字最多 12 个字") }; return }
+        if (cleaned.isEmpty()) { _uiState.update { it.withNotice("至少保留一个进度节点", isError = true) }; return }
+        if (cleaned.size > 8) { _uiState.update { it.withNotice("节点最多 8 个", isError = true) }; return }
+        if (cleaned.any { it.length > 12 }) { _uiState.update { it.withNotice("节点文字最多 12 个字", isError = true) }; return }
         runBusy {
             repository.updateGiftSteps(gift.id, cleaned)
-            _uiState.update { it.copy(message = "礼物节点已更新") }
+            _uiState.update { it.withNotice("礼物节点已更新") }
             loadGifts()
         }
     }
@@ -658,7 +651,7 @@ class MainViewModel : ViewModel() {
         if (position < 0 || position > gift.steps.size) return
         runBusy {
             repository.setGiftProgress(gift.id, position)
-            _uiState.update { it.copy(message = if (position == gift.steps.size) "礼物送达，这一阶段圆满啦" else "礼物进度已更新") }
+            _uiState.update { it.withNotice(if (position == gift.steps.size) "礼物送达，这一阶段圆满啦" else "礼物进度已更新") }
             loadGifts()
         }
     }
@@ -666,14 +659,12 @@ class MainViewModel : ViewModel() {
     fun cancelGift(gift: GiftItem) {
         runBusy {
             repository.cancelGift(gift.id)
-            _uiState.update { it.copy(message = "兑换已取消") }
+            _uiState.update { it.withNotice("兑换已取消") }
             loadGifts()
         }
     }
 
     fun clearAgreementError() = _uiState.update { it.copy(agreementsError = null) }
-    fun clearAgreementNotice() = _uiState.update { it.copy(agreementsMessage = null) }
-    fun clearAgreementUndo() = _uiState.update { it.copy(agreementUndo = null) }
     fun clearAgreementConflict() = _uiState.update { it.copy(agreementConflictItem = null) }
     fun clearAgreementSavedFormEvent() = _uiState.update { it.copy(agreementSavedFormKey = null) }
     fun clearAgreementDeletedEvent() = _uiState.update { it.copy(agreementDeletedId = null) }
@@ -725,7 +716,7 @@ class MainViewModel : ViewModel() {
                     agreementNextOffset = 0
                     agreementRevision = null
                     _uiState.update {
-                        it.copy(agreements = emptyList(), agreementsHasMore = false, agreementsMessage = "清单有更新，正在刷新")
+                        it.copy(agreements = emptyList(), agreementsHasMore = false).withNotice("清单有更新，正在刷新")
                     }
                     startAgreementLoad(refresh = true, clearError = false)
                     return@launch
@@ -781,7 +772,7 @@ class MainViewModel : ViewModel() {
             else -> null
         }
         if (validationError != null) {
-            _uiState.update { it.copy(agreementsError = validationError) }
+            _uiState.update { it.copy(agreementsError = validationError).withNotice(validationError, isError = true) }
             return
         }
         runAgreementMutation(item?.id) { context ->
@@ -794,20 +785,18 @@ class MainViewModel : ViewModel() {
                 if (item == null && (saved.title != cleanedTitle || saved.note != note || saved.dueDate != cleanedDate)) {
                     // The first POST may have succeeded even if its response was
                     // lost. An edited retry still uses that form's original key.
+                    val text = "这条约定已创建，当前输入尚未保存。请选择最新内容或保留你的修改。"
                     _uiState.update {
                         it.copy(
                             agreementConflictItem = saved,
-                            agreementsError = "这条约定已创建，当前输入尚未保存。请选择最新内容或保留你的修改。",
+                            agreementsError = text,
                             agreementSavedFormKey = null,
-                        )
+                        ).withNotice(text, isError = true)
                     }
                 } else {
                     _uiState.update {
-                        it.copy(
-                            agreementsMessage = if (item == null) "约定已添加" else "约定已保存",
-                            agreementUndo = null,
-                            agreementSavedFormKey = idempotencyKey,
-                        )
+                        it.copy(agreementSavedFormKey = idempotencyKey)
+                            .withNotice(if (item == null) "约定已添加" else "约定已保存")
                     }
                 }
             }
@@ -820,9 +809,9 @@ class MainViewModel : ViewModel() {
             val updated = repository.updateAgreement(item, item.title, item.note, item.dueDate, completed)
             if (isAgreementContextCurrent(context)) {
                 _uiState.update {
-                    it.copy(
-                        agreementsMessage = if (completed) "我们完成啦" else "约定已恢复为待完成",
-                        agreementUndo = if (completed) updated else null,
+                    it.withNotice(
+                        text = if (completed) "我们完成啦" else "约定已恢复为待完成",
+                        undoAgreement = if (completed) updated else null,
                     )
                 }
             }
@@ -834,18 +823,14 @@ class MainViewModel : ViewModel() {
             repository.deleteAgreement(item)
             if (isAgreementContextCurrent(context)) {
                 _uiState.update {
-                    it.copy(
-                        agreementsMessage = "约定已删除",
-                        agreementUndo = it.agreementUndo?.takeUnless { undo -> undo.id == item.id },
-                        agreementDeletedId = item.id,
-                    )
+                    it.copy(agreementDeletedId = item.id).withNotice("约定已删除")
                 }
             }
         }
     }
 
     fun undoLastAgreementCompletion() {
-        val item = _uiState.value.agreementUndo ?: return
+        val item = _uiState.value.notice?.undoAgreement ?: return
         setAgreementCompleted(item, false)
     }
 
@@ -853,7 +838,7 @@ class MainViewModel : ViewModel() {
         val context = agreementContext() ?: return
         if (_uiState.value.agreementsBusy) return
         invalidateAgreementLoad()
-        _uiState.update { it.copy(agreementsBusy = true, agreementsError = null, agreementsMessage = null) }
+        _uiState.update { it.copy(agreementsBusy = true, agreementsError = null) }
         agreementMutationJob = viewModelScope.launch {
             var refresh = false
             var conflictId: String? = null
@@ -869,7 +854,7 @@ class MainViewModel : ViewModel() {
                         refresh = true
                         conflictId = itemId.takeIf { error.code == "agreement_conflict" }
                         _uiState.update {
-                            it.copy(agreementConflictItem = null, agreementUndo = it.agreementUndo?.takeUnless { undo -> undo.id == itemId })
+                            it.copy(agreementConflictItem = null)
                         }
                     }
                 }
@@ -936,9 +921,9 @@ class MainViewModel : ViewModel() {
             it.copy(
                 agreements = emptyList(), agreementsPendingCount = 0, agreementsCompletedCount = 0,
                 agreementsTotal = 0, agreementsHasMore = false, agreementsCompletedFilter = false,
-                agreementsBusy = false, agreementsError = null, agreementsMessage = null,
-                agreementUndo = null, agreementConflictItem = null,
+                agreementsBusy = false, agreementsError = null, agreementConflictItem = null,
                 agreementSavedFormKey = null, agreementDeletedId = null,
+                notice = it.notice?.takeIf { notice -> notice.undoAgreement == null },
             )
         }
     }
@@ -947,28 +932,38 @@ class MainViewModel : ViewModel() {
         repository.clearSession()
         resetScoreKey()
         resetAgreementSession()
-        _uiState.update { it.copy(authenticated = false, snapshot = null, gifts = null, giftHistory = emptyList(), giftHistoryTotal = 0) }
+        _uiState.update {
+            it.copy(
+                authenticated = false,
+                snapshot = null,
+                gifts = null,
+                giftHistory = emptyList(),
+                giftHistoryTotal = 0,
+                notice = null,
+            )
+        }
     }
 
     private fun handleAgreementError(error: Exception) {
         if (error is ApiException && error.statusCode == 401) {
             clearAuthenticatedSession()
-            _uiState.update { it.copy(error = "登录已过期，请重新登录") }
+            _uiState.update { it.withNotice("登录已过期，请重新登录", isError = true) }
         } else {
-            _uiState.update { it.copy(agreementsError = error.userMessage()) }
+            val text = error.userMessage()
+            _uiState.update { it.copy(agreementsError = text).withNotice(text, isError = true) }
         }
     }
 
     private fun runBusy(block: suspend () -> Unit) {
         viewModelScope.launch {
-            _uiState.update { it.copy(busy = true, error = null, message = null) }
+            _uiState.update { it.copy(busy = true) }
             try {
                 block()
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
                     clearAuthenticatedSession()
                 }
-                _uiState.update { it.copy(error = error.userMessage()) }
+                _uiState.update { it.withNotice(error.userMessage(), isError = true) }
             } finally {
                 _uiState.update { it.copy(busy = false) }
             }
@@ -991,7 +986,7 @@ class MainViewModel : ViewModel() {
         preferences.edit().putLong("rules_decision_seen_at", at).apply()
         if (decision.requesterId == snapshot.currentUserId) {
             val text = if (decision.status == "accepted") "对方同意了你的记分规则修改" else "对方拒绝了你的记分规则修改"
-            _uiState.update { it.copy(message = text) }
+            _uiState.update { it.withNotice(text) }
         }
     }
 

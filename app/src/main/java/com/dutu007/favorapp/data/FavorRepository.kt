@@ -47,6 +47,39 @@ import java.io.File
 @Serializable private data class GiftStepsRequest(val steps: List<String>)
 @Serializable private data class GiftProgressRequest(@SerialName("current_step") val currentStep: Int)
 @Serializable private data class GiftStatusRequest(val status: String)
+@Serializable private data class AgreementDto(
+    val id: String,
+    @SerialName("creator_id") val creatorId: String,
+    @SerialName("creator_name") val creatorName: String,
+    val title: String,
+    val note: String = "",
+    @SerialName("due_date") val dueDate: String? = null,
+    val completed: Boolean,
+    @SerialName("completed_at") val completedAt: String? = null,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+    val version: Int,
+)
+@Serializable private data class AgreementPageDto(
+    val items: List<AgreementDto> = emptyList(),
+    @SerialName("pending_count") val pendingCount: Int,
+    @SerialName("completed_count") val completedCount: Int,
+    val total: Int,
+    val revision: String,
+)
+@Serializable private data class AgreementCreateRequest(
+    @SerialName("idempotency_key") val idempotencyKey: String,
+    val title: String,
+    val note: String,
+    @SerialName("due_date") val dueDate: String?,
+)
+@Serializable private data class AgreementUpdateRequest(
+    val title: String,
+    val note: String,
+    @SerialName("due_date") val dueDate: String?,
+    val completed: Boolean,
+    val version: Int,
+)
 
 class FavorRepository(context: Context) {
     private val preferences = context.getSharedPreferences("favorapp_session", Context.MODE_PRIVATE)
@@ -90,6 +123,38 @@ class FavorRepository(context: Context) {
     suspend fun updateGiftSteps(id: String, labels: List<String>) { client.put("$baseUrl/api/v1/gifts/$id/steps") { auth(); json(GiftStepsRequest(labels)) }.check() }
     suspend fun setGiftProgress(id: String, currentStep: Int) { client.post("$baseUrl/api/v1/gifts/$id/progress") { auth(); json(GiftProgressRequest(currentStep)) }.check() }
     suspend fun cancelGift(id: String) { client.post("$baseUrl/api/v1/gifts/$id/status") { auth(); json(GiftStatusRequest("cancelled")) }.check() }
+    suspend fun loadAgreements(completed: Boolean, offset: Int, limit: Int): AgreementPage {
+        val dto = client.get("$baseUrl/api/v1/agreements") {
+            auth()
+            url {
+                parameters.append("completed", completed.toString())
+                parameters.append("offset", offset.toString())
+                parameters.append("limit", limit.toString())
+            }
+        }.bodyChecked<AgreementPageDto>()
+        return AgreementPage(dto.items.map { it.toItem() }, dto.pendingCount, dto.completedCount, dto.total, dto.revision)
+    }
+    suspend fun loadAgreement(id: String): AgreementItem =
+        client.get("$baseUrl/api/v1/agreements/$id") { auth() }.bodyChecked<AgreementDto>().toItem()
+
+    suspend fun createAgreement(title: String, note: String, dueDate: String?, idempotencyKey: String): AgreementItem =
+        client.post("$baseUrl/api/v1/agreements") {
+            auth()
+            json(AgreementCreateRequest(idempotencyKey, title, note, dueDate))
+        }.bodyChecked<AgreementDto>().toItem()
+
+    suspend fun updateAgreement(item: AgreementItem, title: String, note: String, dueDate: String?, completed: Boolean): AgreementItem =
+        client.put("$baseUrl/api/v1/agreements/${item.id}") {
+            auth()
+            json(AgreementUpdateRequest(title, note, dueDate, completed, item.version))
+        }.bodyChecked<AgreementDto>().toItem()
+
+    suspend fun deleteAgreement(item: AgreementItem) {
+        client.delete("$baseUrl/api/v1/agreements/${item.id}") {
+            auth()
+            url { parameters.append("version", item.version.toString()) }
+        }.check()
+    }
     suspend fun latestRelease(): AppRelease { val dto = client.get("$baseUrl/api/v1/app/latest") { auth() }.bodyChecked<AppReleaseDto>(); return AppRelease(dto.version_code, dto.version_name, dto.notes, dto.sha256, dto.size) }
     suspend fun downloadApk(destination: File, onProgress: (Long, Long) -> Unit) {
         client.prepareGet("$baseUrl/api/v1/app/apk") { auth() }.execute { response ->
@@ -114,6 +179,7 @@ class FavorRepository(context: Context) {
 
     private fun saveAuth(auth: AuthResponse) { preferences.edit().putString("token", auth.token).putString("user_id", auth.user.id).apply() }
     private fun GiftDto.toItem() = GiftItem(id, requesterId, requesterName, title, note, status, currentStep, steps.map { GiftStep(it.label, it.at) }, cancelledAt, createdAt)
+    private fun AgreementDto.toItem() = AgreementItem(id, creatorId, creatorName, title, note, dueDate, completed, completedAt, createdAt, updatedAt, version)
     private fun HttpRequestBuilder.auth() { header("Authorization", "Bearer ${preferences.getString("token", "")}") }
     private fun HttpRequestBuilder.json(value: Any) { contentType(ContentType.Application.Json); setBody(value) }
     private suspend inline fun <reified T> HttpResponse.bodyChecked(): T { check(); return body() }

@@ -17,6 +17,8 @@ https://api.zengdeming.cn
 - Score rule changes applied only after the partner approves
 - Partner nicknames and date/keyword searchable records
 - Transactional score updates with retry protection
+- A shared agreement list with two-column cards, optional dates and multiline notes
+- Either partner can edit, complete, restore or delete agreements, with conflict protection
 
 ## Android development
 
@@ -27,6 +29,25 @@ https://api.zengdeming.cn
 5. Run the `app` configuration or build `assembleDebug`.
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Agreement list
+
+The new destination, **约定清单**, records things both partners want to do
+together. Cards are arranged in two columns. Titles are required (up to 40
+Unicode code points); notes support multiple lines (up to 2000 code points) and
+the hoped-for completion date is optional. Completed agreements remain in a
+separate view and can be restored, including undoing the latest completion.
+Deleting an agreement removes it from both partners' lists after confirmation.
+
+The list refreshes on entry, on returning to the foreground and on manual
+refresh. Records are scoped to the active couple. Version checks prevent silent
+overwrites, and creation keys prevent duplicate records after network retries.
+The API applies migration `0012_agreements.sql` on startup. Deploy the backend
+from this branch together with the Android update before using this feature.
+
+Backend checks can be run with `cd backend && go test -race ./...`. To include
+database integration tests, set `AGREEMENTS_TEST_DATABASE_URL` to a disposable
+PostgreSQL database; each test creates and removes its own isolated schema.
 
 ## Server deployment
 

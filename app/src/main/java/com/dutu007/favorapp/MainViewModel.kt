@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.dutu007.favorapp.data.CoupleSnapshot
 import com.dutu007.favorapp.data.ApiException
 import com.dutu007.favorapp.data.AppRelease
+import com.dutu007.favorapp.data.AgreementItem
 import com.dutu007.favorapp.data.FavorRepository
 import com.dutu007.favorapp.data.GiftBoard
 import com.dutu007.favorapp.data.GiftItem
@@ -16,6 +17,8 @@ import com.dutu007.favorapp.data.ScoreRule
 import com.dutu007.favorapp.data.ScoreSettingRow
 import com.dutu007.favorapp.data.ScorePreset
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,12 +29,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.UUID
+import java.time.LocalDate
 
 enum class AuthMode { SIGN_IN, SIGN_UP }
 
 const val NOTE_MAX_LENGTH = 200
 const val PRESET_MAX_COUNT = 5
 const val GIFT_HISTORY_PAGE_SIZE = 20
+const val AGREEMENT_TITLE_MAX_LENGTH = 40
+const val AGREEMENT_NOTE_MAX_LENGTH = 2000
+const val AGREEMENTS_PAGE_SIZE = 40
 
 data class AppUiState(
     val loading: Boolean = true,
@@ -62,6 +69,21 @@ data class AppUiState(
     val giftGoalDraft: String = "",
     val giftHistory: List<GiftItem> = emptyList(),
     val giftHistoryTotal: Int = 0,
+    val agreements: List<AgreementItem> = emptyList(),
+    val agreementsPendingCount: Int = 0,
+    val agreementsCompletedCount: Int = 0,
+    val agreementsTotal: Int = 0,
+    val agreementsHasMore: Boolean = false,
+    val agreementsCompletedFilter: Boolean = false,
+    val agreementsLoading: Boolean = false,
+    val agreementsLoadingMore: Boolean = false,
+    val agreementsBusy: Boolean = false,
+    val agreementsError: String? = null,
+    val agreementsMessage: String? = null,
+    val agreementUndo: AgreementItem? = null,
+    val agreementConflictItem: AgreementItem? = null,
+    val agreementSavedFormKey: String? = null,
+    val agreementDeletedId: String? = null,
     val message: String? = null,
     val error: String? = null,
     val flash: String? = null,
@@ -78,6 +100,16 @@ class MainViewModel : ViewModel() {
     private val preferences = FavorApplication.instance.getSharedPreferences("favorapp_settings", android.content.Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(AppUiState())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
+
+    private data class AgreementSession(val token: String, val userId: String, val coupleId: String)
+    private data class AgreementContext(val session: AgreementSession, val epoch: Long)
+    private var agreementSession: AgreementSession? = null
+    private var agreementEpoch = 0L
+    private var agreementListRequest = 0L
+    private var agreementNextOffset = 0
+    private var agreementRevision: String? = null
+    private var agreementLoadJob: Job? = null
+    private var agreementMutationJob: Job? = null
 
     init {
         loadPresets()
@@ -185,6 +217,7 @@ class MainViewModel : ViewModel() {
                     _uiState.update { it.copy(message = "已是最新版本 $currentVersionName") }
                 }
             } catch (error: Exception) {
+                if (error is ApiException && error.statusCode == 401) clearAuthenticatedSession()
                 if (manual) {
                     val text = if (error is ApiException && error.statusCode == 404) "服务器还没有可下载的版本" else error.userMessage()
                     _uiState.update { it.copy(error = text) }
@@ -214,6 +247,7 @@ class MainViewModel : ViewModel() {
                 }
                 _uiState.update { it.copy(updateDownloading = false, updateReadyPath = target.absolutePath, updateAvailable = null) }
             } catch (error: Exception) {
+                if (error is ApiException && error.statusCode == 401) clearAuthenticatedSession()
                 _uiState.update { it.copy(updateDownloading = false, updateError = error.message ?: "下载失败，请稍后重试") }
             }
         }
@@ -292,6 +326,7 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = null) }
             if (repository.currentUserId() == null) {
+                resetAgreementSession()
                 _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
                 return@launch
             }
@@ -300,8 +335,7 @@ class MainViewModel : ViewModel() {
                 checkForUpdate()
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
-                    repository.clearSession()
-                    resetScoreKey()
+                    clearAuthenticatedSession()
                 }
                 _uiState.update { it.copy(loading = false, error = error.userMessage()) }
             }
@@ -310,6 +344,7 @@ class MainViewModel : ViewModel() {
 
     fun refreshSnapshot(keyword: String = "", date: String = "", notify: Boolean = false) {
         if (repository.currentUserId() == null) {
+            resetAgreementSession()
             _uiState.update { it.copy(loading = false, authenticated = false, snapshot = null, error = null) }
             return
         }
@@ -320,9 +355,7 @@ class MainViewModel : ViewModel() {
                 if (notify) _uiState.update { it.copy(flash = "刷新成功", flashError = false) }
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
-                    repository.clearSession()
-                    resetScoreKey()
-                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                    clearAuthenticatedSession()
                 }
                 if (notify) _uiState.update { it.copy(flash = "刷新失败", flashError = true) }
                 else _uiState.update { it.copy(error = error.userMessage()) }
@@ -354,10 +387,11 @@ class MainViewModel : ViewModel() {
         runBusy {
             if (state.authMode == AuthMode.SIGN_IN) {
                 repository.signIn(state.email, state.password)
+                resetAgreementSession()
                 loadSnapshot()
             } else {
                 repository.signUp(state.email, state.password, state.displayName)
-                repository.clearSession()
+                clearAuthenticatedSession()
                 _uiState.update {
                     it.copy(
                         authMode = AuthMode.SIGN_IN,
@@ -378,6 +412,7 @@ class MainViewModel : ViewModel() {
         runBusy {
             repository.signOut()
             resetScoreKey()
+            resetAgreementSession()
             _uiState.update { AppUiState(loading = false) }
         }
     }
@@ -534,9 +569,7 @@ class MainViewModel : ViewModel() {
                 _uiState.update { it.copy(gifts = board) }
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
-                    repository.clearSession()
-                    resetScoreKey()
-                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                    clearAuthenticatedSession()
                 }
             }
         }
@@ -581,9 +614,7 @@ class MainViewModel : ViewModel() {
                 }
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
-                    repository.clearSession()
-                    resetScoreKey()
-                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                    clearAuthenticatedSession()
                 }
             }
         }
@@ -640,6 +671,294 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    fun clearAgreementError() = _uiState.update { it.copy(agreementsError = null) }
+    fun clearAgreementNotice() = _uiState.update { it.copy(agreementsMessage = null) }
+    fun clearAgreementUndo() = _uiState.update { it.copy(agreementUndo = null) }
+    fun clearAgreementConflict() = _uiState.update { it.copy(agreementConflictItem = null) }
+    fun clearAgreementSavedFormEvent() = _uiState.update { it.copy(agreementSavedFormKey = null) }
+    fun clearAgreementDeletedEvent() = _uiState.update { it.copy(agreementDeletedId = null) }
+
+    fun selectAgreementFilter(completed: Boolean) {
+        if (_uiState.value.agreementsCompletedFilter == completed) return
+        invalidateAgreementLoad()
+        agreementNextOffset = 0
+        agreementRevision = null
+        _uiState.update {
+            it.copy(
+                agreementsCompletedFilter = completed,
+                agreements = emptyList(),
+                agreementsTotal = if (completed) it.agreementsCompletedCount else it.agreementsPendingCount,
+                agreementsHasMore = false,
+                agreementsError = null,
+            )
+        }
+        loadAgreements()
+    }
+
+    fun loadAgreements(refresh: Boolean = true) = startAgreementLoad(refresh, clearError = true)
+
+    private fun startAgreementLoad(refresh: Boolean, clearError: Boolean, conflictId: String? = null) {
+        val context = agreementContext() ?: return
+        val state = _uiState.value
+        if (state.agreementsBusy || state.agreementsLoading || (!refresh && (state.agreementsLoadingMore || !state.agreementsHasMore))) return
+        invalidateAgreementLoad()
+        val completed = state.agreementsCompletedFilter
+        val offset = if (refresh) 0 else agreementNextOffset
+        val expectedRevision = agreementRevision
+        val request = agreementListRequest
+        _uiState.update {
+            it.copy(
+                agreementsLoading = refresh,
+                agreementsLoadingMore = !refresh,
+                agreementsError = if (clearError) null else it.agreementsError,
+            )
+        }
+        agreementLoadJob = viewModelScope.launch {
+            try {
+                val page = repository.loadAgreements(completed, offset, AGREEMENTS_PAGE_SIZE)
+                if (!isAgreementRequestCurrent(context, request, completed)) return@launch
+                if (offset > 0 && page.revision != expectedRevision) {
+                    // A partner's edit can shift the server's sorted pages.
+                    // Restart rather than skipping or repeating records.
+                    agreementLoadJob = null
+                    invalidateAgreementLoad()
+                    agreementNextOffset = 0
+                    agreementRevision = null
+                    _uiState.update {
+                        it.copy(agreements = emptyList(), agreementsHasMore = false, agreementsMessage = "清单有更新，正在刷新")
+                    }
+                    startAgreementLoad(refresh = true, clearError = false)
+                    return@launch
+                }
+                agreementNextOffset = offset + page.items.size
+                agreementRevision = page.revision
+                _uiState.update {
+                    it.copy(
+                        agreements = if (offset == 0) page.items else (it.agreements + page.items).distinctBy { item -> item.id },
+                        agreementsPendingCount = page.pendingCount,
+                        agreementsCompletedCount = page.completedCount,
+                        agreementsTotal = page.total,
+                        agreementsHasMore = page.items.isNotEmpty() && agreementNextOffset < page.total,
+                    )
+                }
+                if (conflictId != null) {
+                    val latest = try {
+                        repository.loadAgreement(conflictId)
+                    } catch (error: ApiException) {
+                        if (error.code == "agreement_not_found") null else throw error
+                    }
+                    if (isAgreementRequestCurrent(context, request, completed)) {
+                        _uiState.update { it.copy(agreementConflictItem = latest) }
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (isAgreementRequestCurrent(context, request, completed)) handleAgreementError(error)
+            } finally {
+                if (isAgreementRequestCurrent(context, request, completed)) {
+                    _uiState.update { it.copy(agreementsLoading = false, agreementsLoadingMore = false) }
+                }
+            }
+        }
+    }
+
+    fun saveAgreement(
+        item: AgreementItem?,
+        title: String,
+        note: String,
+        dueDate: String?,
+        idempotencyKey: String,
+    ) {
+        if (_uiState.value.agreementsBusy) return
+        val cleanedTitle = title.trim()
+        val cleanedDate = dueDate?.trim()?.takeIf { it.isNotEmpty() }
+        val validationError = when {
+            cleanedTitle.isEmpty() || cleanedTitle.codePointCount(0, cleanedTitle.length) > AGREEMENT_TITLE_MAX_LENGTH -> "请填写约定名称（最多 $AGREEMENT_TITLE_MAX_LENGTH 个字）"
+            note.codePointCount(0, note.length) > AGREEMENT_NOTE_MAX_LENGTH -> "备注最多 $AGREEMENT_NOTE_MAX_LENGTH 个字"
+            cleanedDate != null && !validAgreementDate(cleanedDate) -> "希望完成日期需为有效的 YYYY-MM-DD 日期"
+            idempotencyKey.isBlank() -> "保存约定失败，请重新打开表单再试"
+            else -> null
+        }
+        if (validationError != null) {
+            _uiState.update { it.copy(agreementsError = validationError) }
+            return
+        }
+        runAgreementMutation(item?.id) { context ->
+            val saved = if (item == null) {
+                repository.createAgreement(cleanedTitle, note, cleanedDate, idempotencyKey)
+            } else {
+                repository.updateAgreement(item, cleanedTitle, note, cleanedDate, item.completed)
+            }
+            if (isAgreementContextCurrent(context)) {
+                if (item == null && (saved.title != cleanedTitle || saved.note != note || saved.dueDate != cleanedDate)) {
+                    // The first POST may have succeeded even if its response was
+                    // lost. An edited retry still uses that form's original key.
+                    _uiState.update {
+                        it.copy(
+                            agreementConflictItem = saved,
+                            agreementsError = "这条约定已创建，当前输入尚未保存。请选择最新内容或保留你的修改。",
+                            agreementSavedFormKey = null,
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            agreementsMessage = if (item == null) "约定已添加" else "约定已保存",
+                            agreementUndo = null,
+                            agreementSavedFormKey = idempotencyKey,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun setAgreementCompleted(item: AgreementItem, completed: Boolean) {
+        if (item.completed == completed) return
+        runAgreementMutation(item.id) { context ->
+            val updated = repository.updateAgreement(item, item.title, item.note, item.dueDate, completed)
+            if (isAgreementContextCurrent(context)) {
+                _uiState.update {
+                    it.copy(
+                        agreementsMessage = if (completed) "我们完成啦" else "约定已恢复为待完成",
+                        agreementUndo = if (completed) updated else null,
+                    )
+                }
+            }
+        }
+    }
+
+    fun deleteAgreement(item: AgreementItem) {
+        runAgreementMutation(item.id) { context ->
+            repository.deleteAgreement(item)
+            if (isAgreementContextCurrent(context)) {
+                _uiState.update {
+                    it.copy(
+                        agreementsMessage = "约定已删除",
+                        agreementUndo = it.agreementUndo?.takeUnless { undo -> undo.id == item.id },
+                        agreementDeletedId = item.id,
+                    )
+                }
+            }
+        }
+    }
+
+    fun undoLastAgreementCompletion() {
+        val item = _uiState.value.agreementUndo ?: return
+        setAgreementCompleted(item, false)
+    }
+
+    private fun runAgreementMutation(itemId: String?, block: suspend (AgreementContext) -> Unit) {
+        val context = agreementContext() ?: return
+        if (_uiState.value.agreementsBusy) return
+        invalidateAgreementLoad()
+        _uiState.update { it.copy(agreementsBusy = true, agreementsError = null, agreementsMessage = null) }
+        agreementMutationJob = viewModelScope.launch {
+            var refresh = false
+            var conflictId: String? = null
+            try {
+                block(context)
+                refresh = true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (isAgreementContextCurrent(context)) {
+                    handleAgreementError(error)
+                    if (error is ApiException && (error.statusCode == 409 || error.code == "agreement_not_found")) {
+                        refresh = true
+                        conflictId = itemId.takeIf { error.code == "agreement_conflict" }
+                        _uiState.update {
+                            it.copy(agreementConflictItem = null, agreementUndo = it.agreementUndo?.takeUnless { undo -> undo.id == itemId })
+                        }
+                    }
+                }
+            } finally {
+                if (isAgreementContextCurrent(context)) {
+                    _uiState.update { it.copy(agreementsBusy = false) }
+                    if (refresh) {
+                        invalidateAgreementLoad()
+                        startAgreementLoad(refresh = true, clearError = false, conflictId = conflictId)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun validAgreementDate(value: String): Boolean =
+        value.matches(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")) &&
+            runCatching { LocalDate.parse(value).year in 1..9999 }.getOrDefault(false)
+
+    private fun currentAgreementSession(): AgreementSession? {
+        val userId = repository.currentUserId() ?: return null
+        val snapshot = _uiState.value.snapshot ?: return null
+        if (!_uiState.value.authenticated || snapshot.currentUserId != userId) return null
+        return AgreementSession(repository.authToken(), userId, snapshot.coupleId)
+    }
+
+    private fun agreementContext(): AgreementContext? {
+        val session = currentAgreementSession()
+        if (session == null) {
+            resetAgreementSession()
+            return null
+        }
+        if (agreementSession != session) {
+            val selectedFilter = if (agreementSession == null) _uiState.value.agreementsCompletedFilter else false
+            resetAgreementSession()
+            agreementSession = session
+            _uiState.update { it.copy(agreementsCompletedFilter = selectedFilter) }
+        }
+        return AgreementContext(session, agreementEpoch)
+    }
+
+    private fun isAgreementContextCurrent(context: AgreementContext): Boolean =
+        context.epoch == agreementEpoch && context.session == currentAgreementSession()
+
+    private fun isAgreementRequestCurrent(context: AgreementContext, request: Long, completed: Boolean): Boolean =
+        isAgreementContextCurrent(context) && request == agreementListRequest && completed == _uiState.value.agreementsCompletedFilter
+
+    private fun invalidateAgreementLoad() {
+        agreementListRequest++
+        agreementLoadJob?.cancel()
+        agreementLoadJob = null
+        _uiState.update { it.copy(agreementsLoading = false, agreementsLoadingMore = false) }
+    }
+
+    private fun resetAgreementSession() {
+        agreementEpoch++
+        agreementSession = null
+        invalidateAgreementLoad()
+        agreementMutationJob?.cancel()
+        agreementMutationJob = null
+        agreementNextOffset = 0
+        agreementRevision = null
+        _uiState.update {
+            it.copy(
+                agreements = emptyList(), agreementsPendingCount = 0, agreementsCompletedCount = 0,
+                agreementsTotal = 0, agreementsHasMore = false, agreementsCompletedFilter = false,
+                agreementsBusy = false, agreementsError = null, agreementsMessage = null,
+                agreementUndo = null, agreementConflictItem = null,
+                agreementSavedFormKey = null, agreementDeletedId = null,
+            )
+        }
+    }
+
+    private fun clearAuthenticatedSession() {
+        repository.clearSession()
+        resetScoreKey()
+        resetAgreementSession()
+        _uiState.update { it.copy(authenticated = false, snapshot = null, gifts = null, giftHistory = emptyList(), giftHistoryTotal = 0) }
+    }
+
+    private fun handleAgreementError(error: Exception) {
+        if (error is ApiException && error.statusCode == 401) {
+            clearAuthenticatedSession()
+            _uiState.update { it.copy(error = "登录已过期，请重新登录") }
+        } else {
+            _uiState.update { it.copy(agreementsError = error.userMessage()) }
+        }
+    }
+
     private fun runBusy(block: suspend () -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(busy = true, error = null, message = null) }
@@ -647,9 +966,7 @@ class MainViewModel : ViewModel() {
                 block()
             } catch (error: Exception) {
                 if (error is ApiException && error.statusCode == 401) {
-                    repository.clearSession()
-                    resetScoreKey()
-                    _uiState.update { it.copy(authenticated = false, snapshot = null) }
+                    clearAuthenticatedSession()
                 }
                 _uiState.update { it.copy(error = error.userMessage()) }
             } finally {
@@ -663,6 +980,7 @@ class MainViewModel : ViewModel() {
         val snapshot = repository.loadSnapshot(from = date, to = date, keyword = keyword)
         notifyRuleDecision(snapshot)
         _uiState.update { it.copy(loading = false, authenticated = authenticated, snapshot = snapshot) }
+        if (agreementSession != null && agreementSession != currentAgreementSession()) resetAgreementSession()
     }
 
     // Show the outcome of a rule change request once per decision, remembered across restarts.
@@ -694,6 +1012,12 @@ class MainViewModel : ViewModel() {
             raw.contains("request_not_pending", ignoreCase = true) -> "该请求已不在等待状态"
             raw.contains("request_not_found", ignoreCase = true) -> "修改请求不存在"
             raw.contains("cannot_respond_own_request", ignoreCase = true) -> "不能处理自己发起的请求"
+            raw.contains("agreement_conflict", ignoreCase = true) -> "这条约定刚刚被对方修改了，请查看最新内容后再保存"
+            raw.contains("agreement_not_found", ignoreCase = true) -> "这条约定已被删除，请刷新清单"
+            raw.contains("invalid_agreement_title", ignoreCase = true) -> "请填写约定名称（最多 $AGREEMENT_TITLE_MAX_LENGTH 个字）"
+            raw.contains("agreement_note_too_long", ignoreCase = true) -> "备注最多 $AGREEMENT_NOTE_MAX_LENGTH 个字"
+            raw.contains("invalid_agreement_date", ignoreCase = true) -> "希望完成日期需为有效的 YYYY-MM-DD 日期"
+            raw.contains("invalid_agreement_request", ignoreCase = true) -> "约定内容无效，请检查后再试"
             raw.contains("note_too_long", ignoreCase = true) -> "备注最多 200 个字"
             raw.contains("score_below_goal", ignoreCase = true) -> "分数还没达到目标，继续加油"
             raw.contains("goal_not_set", ignoreCase = true) -> "对方还没给你设置目标，提醒 TA 一下吧"

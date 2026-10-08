@@ -14,3 +14,25 @@ data class GiftItem(val id: String, val requesterId: String, val requesterName: 
 data class GiftGoalEntry(val userId: String, val targetScore: Int)
 data class GiftBoard(val goals: List<GiftGoalEntry> = emptyList(), val gifts: List<GiftItem> = emptyList(), val historyTotal: Int = 0)
 data class GiftHistoryPage(val total: Int, val gifts: List<GiftItem>)
+
+data class AgreementItem(
+    val id: String,
+    val creatorId: String,
+    val creatorName: String,
+    val title: String,
+    val note: String,
+    val dueDate: String?,
+    val completed: Boolean,
+    val completedAt: String?,
+    val createdAt: String,
+    val updatedAt: String,
+    val version: Int,
+)
+
+data class AgreementPage(
+    val items: List<AgreementItem>,
+    val pendingCount: Int,
+    val completedCount: Int,
+    val total: Int,
+    val revision: String,
+)

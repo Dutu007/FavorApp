@@ -108,6 +108,11 @@ func main() {
 	mux.Handle("POST /api/v1/gifts/{id}/progress", s.auth(http.HandlerFunc(s.setGiftProgress)))
 	mux.Handle("POST /api/v1/gifts/{id}/status", s.auth(http.HandlerFunc(s.cancelGift)))
 	mux.Handle("DELETE /api/v1/gifts/{id}", s.auth(http.HandlerFunc(s.deleteGift)))
+	mux.Handle("GET /api/v1/agreements", s.auth(http.HandlerFunc(s.agreements)))
+	mux.Handle("GET /api/v1/agreements/{id}", s.auth(http.HandlerFunc(s.agreement)))
+	mux.Handle("POST /api/v1/agreements", s.auth(http.HandlerFunc(s.createAgreement)))
+	mux.Handle("PUT /api/v1/agreements/{id}", s.auth(http.HandlerFunc(s.updateAgreement)))
+	mux.Handle("DELETE /api/v1/agreements/{id}", s.auth(http.HandlerFunc(s.deleteAgreement)))
 	mux.Handle("GET /api/v1/app/latest", s.auth(http.HandlerFunc(s.latestApp)))
 	mux.Handle("GET /api/v1/app/apk", s.auth(http.HandlerFunc(s.appAPK)))
 

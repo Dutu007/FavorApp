@@ -122,6 +122,20 @@ private val PinkGradient = Brush.verticalGradient(
     listOf(Color(0xFFFFE0ED), Color(0xFFF5EEFC), Color(0xFFFFFAFC)),
 )
 
+private val AgreementNavIcon = ImageVector.Builder(
+    name = "AgreementList", defaultWidth = 24.dp, defaultHeight = 24.dp,
+    viewportWidth = 24f, viewportHeight = 24f,
+).apply {
+    path(fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.8f,
+        strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+        moveTo(5f, 3f); lineTo(19f, 3f); lineTo(19f, 21f); lineTo(5f, 21f); close()
+        moveTo(8f, 8f); lineTo(9f, 9f); lineTo(11f, 7f)
+        moveTo(14f, 8f); lineTo(16f, 8f)
+        moveTo(8f, 14f); lineTo(9f, 15f); lineTo(11f, 13f)
+        moveTo(14f, 14f); lineTo(16f, 14f)
+    }
+}.build()
+
 // Server caps a query at 200 events; render them in pages of this size.
 private const val RECORDS_PAGE_SIZE = 50
 private const val RECORDS_SERVER_LIMIT = 200
@@ -574,7 +588,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
     val shownEvents = visibleEvents.take(visibleLimit)
     LaunchedEffect(tab, keyword, date) {
         when (tab) {
-            2 -> return@LaunchedEffect
+            2, 3 -> return@LaunchedEffect
             0 -> {
                 // Returning home: drop the records-tab filters so the recent-records card is complete.
                 if (keyword.isNotBlank() || date.isNotBlank()) {
@@ -596,15 +610,16 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             bottomBar = {
                 NavigationBar(modifier = Modifier.height(60.dp), containerColor = Color.White, tonalElevation = 0.dp) {
                     NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("♡", fontSize = 24.sp) })
+                    NavigationBarItem(selected = tab == 3, onClick = { tab = 3 }, icon = { Icon(AgreementNavIcon, contentDescription = "约定清单", modifier = Modifier.size(24.dp)) })
                     NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(GiftNavIcon, contentDescription = null, modifier = Modifier.size(24.dp)) })
                     NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("☰", fontSize = 24.sp) })
                 }
             },
             topBar = {
                 TopAppBar(
-                    title = { Text(when (tab) { 1 -> "好感度记录"; 2 -> "阶段性奖励"; else -> "我们的空间" }, fontWeight = FontWeight.Bold) },
+                    title = { Text(when (tab) { 1 -> "好感度记录"; 2 -> "阶段性奖励"; 3 -> "约定清单"; else -> "我们的空间" }, fontWeight = FontWeight.Bold) },
                     actions = {
-                        TextButton(onClick = { viewModel.refreshSnapshot(notify = true); if (tab == 2) viewModel.loadGifts() }, enabled = !state.busy) { Text("刷新") }
+                        TextButton(onClick = { if (tab == 3) viewModel.loadAgreements() else { viewModel.refreshSnapshot(notify = true); if (tab == 2) viewModel.loadGifts() } }, enabled = if (tab == 3) !state.agreementsBusy && !state.agreementsLoading else !state.busy) { Text("刷新") }
                         TextButton(onClick = { showSettings = true }, enabled = !state.busy) { Text("设置") }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -613,7 +628,11 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
         ) { padding ->
             // Separate lists keep each destination's scroll position.
             androidx.compose.runtime.key(tab) {
-                LazyColumn(
+                if (tab == 3) {
+                    androidx.compose.runtime.key(snapshot.coupleId) {
+                        AgreementScreen(state, snapshot, viewModel, Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding))
+                    }
+                } else LazyColumn(
                     modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding).imePadding(),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),

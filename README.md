@@ -42,7 +42,7 @@ the hoped-for completion date is optional. Completed agreements remain in a
 separate view and can be restored, including undoing the latest completion.
 Deleting an agreement removes it from both partners' lists after confirmation.
 
-App messages float at the center of the screen without changing page layout.
+App messages appear in notice boxes within the current page's layout.
 They disappear after three seconds, or five seconds for errors and completion
 messages with an undo action (longer when requested by accessibility settings).
 Completion shows one message; dismissing it also removes its undo action.

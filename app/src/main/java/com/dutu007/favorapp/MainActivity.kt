@@ -193,21 +193,17 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun FavorApp(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val screenState = if (state.updateAvailable != null || state.updateDownloading) state.copy(notice = null) else state
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when {
             state.loading -> LoadingScreen()
-            !state.authenticated -> AuthScreen(state, viewModel)
-            state.snapshot == null -> PairingScreen(state, viewModel)
-            else -> HomeScreen(state.snapshot!!, state, viewModel)
+            !state.authenticated -> AuthScreen(screenState, viewModel)
+            state.snapshot == null -> PairingScreen(screenState, viewModel)
+            else -> HomeScreen(state.snapshot!!, screenState, viewModel)
         }
     }
     UpdateDialogs(state, viewModel)
-    GlobalNoticeHost(
-        notice = state.notice,
-        onDismiss = viewModel::dismissNotice,
-        onUndo = viewModel::undoLastAgreementCompletion,
-        undoEnabled = !state.agreementsBusy,
-    )
+    NoticeExpiryEffect(state.notice, viewModel::dismissNotice)
 }
 
 @Composable
@@ -241,6 +237,7 @@ private fun UpdateDialogs(state: AppUiState, viewModel: MainViewModel) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (release.notes.isNotBlank()) Text(release.notes)
                     if (release.size > 0) Text("安装包约 ${release.size / 1024 / 1024 + 1} MB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                    InlineNotice(state, viewModel)
                 }
             },
             confirmButton = {
@@ -376,6 +373,7 @@ private fun AuthScreen(state: AppUiState, viewModel: MainViewModel) {
                         )
                     }
                     Spacer(Modifier.height(10.dp))
+                    InlineNotice(state, viewModel)
                     Spacer(Modifier.height(14.dp))
                     Button(
                         onClick = viewModel::submitAuth,
@@ -511,6 +509,7 @@ private fun PairingScreen(state: AppUiState, viewModel: MainViewModel) {
                         PrimaryAction("连接我们的空间", state.busy, viewModel::acceptInvite)
                     }
                 }
+                if (!showAccount) InlineNotice(state, viewModel)
                 Spacer(Modifier.height(24.dp))
                 Text("一起收藏小事 · 认真回应喜欢", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
             }
@@ -611,16 +610,24 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
             androidx.compose.runtime.key(tab) {
                 if (tab == 3) {
                     androidx.compose.runtime.key(snapshot.coupleId) {
-                        AgreementScreen(state, snapshot, viewModel, Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding))
+                        AgreementScreen(
+                            state = if (showSettings || showGiftHistory) state.copy(notice = null) else state,
+                            snapshot = snapshot,
+                            viewModel = viewModel,
+                            modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding),
+                        )
                     }
                 } else LazyColumn(
                     modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding).imePadding(),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
+                    if (state.notice != null && !showSettings && !showGiftHistory) {
+                        item(key = "page_notice") { InlineNotice(state, viewModel) }
+                    }
                     if (tab == 0) {
-                        item { CoupleHeroCard(snapshot, viewModel) }
-                        item {
+                        item(key = "couple_hero") { CoupleHeroCard(snapshot, viewModel) }
+                        item(key = "score_form") {
                             PairingCard("记录一次", null) {
                                 AppTextField(note, { note = it }, "备注（可选）", "✎")
                                 Spacer(Modifier.height(16.dp))
@@ -651,16 +658,16 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                                 Text("正数为加分，负数为扣分；确认后才会保存", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                             }
                         }
-                        item {
+                        item(key = "recent_events_title") {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("最近的好感度记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 TextButton(onClick = { tab = 1 }) { Text("查看记录  ›") }
                             }
                         }
-                        if (snapshot.events.isEmpty()) item { EmptyEventsCard() }
+                        if (snapshot.events.isEmpty()) item(key = "recent_events_empty") { EmptyEventsCard() }
                         else items(snapshot.events.take(3), key = { it.id }) { EventCard(it, snapshot) }
                     } else if (tab == 1) {
-                        item {
+                        item(key = "events_filter") {
                             ElevatedCard(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(24.dp),
@@ -708,7 +715,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                             }
                         }
                         if (visibleEvents.isEmpty()) {
-                            item {
+                            item(key = "events_empty") {
                                 val filtersActive = keyword.isNotBlank() || date.isNotBlank() || filter != 0 || direction != 0
                                 if (snapshot.events.isEmpty() && !filtersActive) EmptyEventsCard()
                                 else PairingCard("这里暂时没有记录", "试试切换其他筛选，看看你们的日常。") {}
@@ -716,7 +723,7 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                         } else {
                             items(shownEvents, key = { it.id }) { EventCard(it, snapshot) }
                             if (visibleLimit < visibleEvents.size) {
-                                item {
+                                item(key = "events_more") {
                                     OutlinedButton(
                                         onClick = { visibleLimit += RECORDS_PAGE_SIZE },
                                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -727,22 +734,22 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
                             }
                         }
                     } else {
-                        item { GiftGoalCard(state, viewModel) }
+                        item(key = "gift_goal") { GiftGoalCard(state, viewModel) }
                         val gifts = state.gifts?.gifts.orEmpty()
                         // Waiting-for-acceptance wishes count as in flight too:
                         // only received/cancelled gifts are history.
                         val mine = gifts.firstOrNull { it.requesterId == snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
                         val theirs = gifts.firstOrNull { it.requesterId != snapshot.currentUserId && it.status != GIFT_RECEIVED && it.status != "cancelled" }
-                        if (mine == null) item { GiftRedeemCard(state, viewModel) }
+                        if (mine == null) item(key = "gift_redeem") { GiftRedeemCard(state, viewModel) }
                         if (mine != null) item(key = mine.id) { GiftTrackingCard(mine, state, viewModel) }
                         if (theirs != null) item(key = theirs.id) { GiftTrackingCard(theirs, state, viewModel) }
                         val history = gifts.filter { it.status in GIFT_FINISHED }
                         val historyTotal = state.gifts?.historyTotal ?: history.size
                         if (history.isNotEmpty()) {
-                            item { Text("过往礼物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                            item(key = "gift_history_title") { Text("过往礼物", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
                             items(history.take(3), key = { it.id }) { GiftHistoryCard(it, onClick = { giftDeleteCandidate = it }) }
                             if (historyTotal > 3) {
-                                item {
+                                item(key = "gift_history_more") {
                                     TextButton(onClick = { showGiftHistory = true }, modifier = Modifier.fillMaxWidth()) { Text("查看完整历史 ›") }
                                 }
                             }
@@ -1204,6 +1211,7 @@ private fun GiftHistoryScreen(state: AppUiState, viewModel: MainViewModel, onBac
     var deleteCandidate by remember { mutableStateOf<GiftItem?>(null) }
     SettingsPageScaffold("礼物历史", onBack) { padding ->
         LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (state.notice != null) item { InlineNotice(state, viewModel) }
             if (state.giftHistory.isEmpty()) {
                 item {
                     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = Color.White.copy(alpha = 0.74f)) {
@@ -1295,6 +1303,7 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
     SettingsPageScaffold("设置", onDismiss) { padding ->
         LazyColumn(modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (state.notice != null) item { InlineNotice(state, viewModel) }
             item { SettingsRow("我的头像", "更换或移除") { page = "avatar" } }
             item {
                 SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
@@ -1366,6 +1375,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
             if (myCard != null) {
                 AvatarBubble(state.snapshot.currentUserName, viewModel.avatarUrlFor(myCard.userId, myCard.avatarVersion), viewModel.authToken, size = 120.dp)
             }
+            InlineNotice(state, viewModel)
             Button(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("更换头像") }
             if ((myCard?.avatarVersion ?: 0) > 0) {
                 OutlinedButton(onClick = viewModel::deleteAvatar, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("移除头像") }
@@ -1381,6 +1391,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
         Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("这是你对 TA 的专属称呼，只对你自己可见。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             AppTextField(nickname, { nickname = it.take(8) }, "昵称（最多 8 个字）", "♡")
+            InlineNotice(state, viewModel)
             PrimaryAction("保存", state.busy) { if (viewModel.savePartnerNickname(nickname)) onBack() }
             Text("留空保存即清除昵称，界面会恢复显示对方的名字。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -1393,6 +1404,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
     LaunchedEffect(Unit) { viewModel.refreshSnapshot() }
     SettingsPageScaffold("记分规则", onBack) { padding ->
         Column(Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            InlineNotice(state, viewModel)
             if (pending != null) {
                 PendingRulesCard(state, pending, viewModel)
             } else {
@@ -1455,6 +1467,7 @@ private fun SettingsPageScaffold(title: String, onBack: () -> Unit, content: @Co
             item { AppTextField(state.presetLabel, viewModel::setPresetLabel, "备注，例如：乖乖早睡", "♡") }
             item { Text("备注最多 $NOTE_MAX_LENGTH 个字，常用记录最多保存 $PRESET_MAX_COUNT 条（当前 ${state.scorePresets.size}/$PRESET_MAX_COUNT）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) { NumberField("分值（正数加分，负数扣分）", state.presetDelta, viewModel::setPresetDelta, Modifier.weight(1f)); Button(onClick = viewModel::addPreset, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("添加") } } }
+            if (state.notice != null) item { InlineNotice(state, viewModel) }
             items(state.scorePresets, key = { it.id }) { preset -> Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.9f)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Text(preset.label, Modifier.weight(1f)); Text(if (preset.delta > 0) "+${preset.delta}" else preset.delta.toString(), fontWeight = FontWeight.Bold); TextButton(onClick = { viewModel.removePreset(preset.id) }) { Text("删除") } } } }
         }
     }

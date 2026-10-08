@@ -119,6 +119,11 @@ fun AgreementScreen(
                     }
                 }
             }
+            if (state.notice != null && details == null && !editorOpen && deleting == null) {
+                item(key = "agreement_notice", span = { GridItemSpan(maxLineSpan) }) {
+                    InlineNotice(state, viewModel, Modifier.fillMaxWidth())
+                }
+            }
             if (state.agreementsLoading) {
                 item(span = { GridItemSpan(maxLineSpan) }) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }
@@ -187,6 +192,9 @@ fun AgreementScreen(
             onEdit = { details = null; openEditor(item) },
             onComplete = { details = null; viewModel.setAgreementCompleted(item, !item.completed) },
             onDelete = { viewModel.clearAgreementError(); viewModel.clearAgreementConflict(); deleting = item },
+            notice = {
+                if (!editorOpen && deleting == null) InlineNotice(state, viewModel, Modifier.fillMaxWidth())
+            },
         )
     }
     if (editorOpen) {
@@ -202,6 +210,9 @@ fun AgreementScreen(
             onSave = { title, note, date ->
                 viewModel.saveAgreement(source, title, note, date.ifBlank { null }, createKey)
             },
+            notice = {
+                if (deleting == null) InlineNotice(state, viewModel, Modifier.fillMaxWidth())
+            },
         )
     }
     deleting?.let { item ->
@@ -211,6 +222,7 @@ fun AgreementScreen(
             title = { Text("删除约定") },
             text = {
                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    InlineNotice(state, viewModel, Modifier.fillMaxWidth())
                     Text(item.title, fontWeight = FontWeight.SemiBold)
                     Text("删除后，你们双方的清单都会移除这条约定，且无法恢复。")
                     if (latest != null) {
@@ -291,6 +303,7 @@ private fun AgreementCard(
 private fun AgreementDetails(
     item: AgreementItem, snapshot: CoupleSnapshot, busy: Boolean,
     onDismiss: () -> Unit, onEdit: () -> Unit, onComplete: () -> Unit, onDelete: () -> Unit,
+    notice: @Composable () -> Unit,
 ) {
     AgreementPageDialog("约定详情", busy, onDismiss, topAction = {
         TextButton(onClick = onEdit, enabled = !busy) { Text("编辑") }
@@ -299,6 +312,7 @@ private fun AgreementDetails(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
+            notice()
             Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(if (item.completed) "已完成 · ${agreementTime(item.completedAt)}" else "待完成", color = MaterialTheme.colorScheme.primary)
             Text(item.dueDate?.let { "希望完成日期：$it" } ?: "希望完成日期：暂未约定", color = MaterialTheme.colorScheme.secondary)
@@ -325,6 +339,7 @@ private fun AgreementEditor(
     formKey: String, item: AgreementItem?, latest: AgreementItem?, busy: Boolean,
     onDismiss: () -> Unit, onUseLatest: (AgreementItem) -> Unit,
     onSave: (String, String, String) -> Unit,
+    notice: @Composable () -> Unit,
 ) {
     var title by rememberSaveable(formKey) { mutableStateOf(item?.title.orEmpty()) }
     var note by rememberSaveable(formKey) { mutableStateOf(item?.note.orEmpty()) }
@@ -341,6 +356,7 @@ private fun AgreementEditor(
             Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            notice()
             Text("记下已经商量好、想一起完成的事情", color = MaterialTheme.colorScheme.secondary)
             if (outdated) {
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer) {

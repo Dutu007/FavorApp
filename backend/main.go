@@ -96,6 +96,7 @@ func main() {
 	mux.Handle("POST /api/v1/score-settings/requests/{id}/cancel", s.auth(http.HandlerFunc(s.cancelRulesRequest)))
 	mux.Handle("GET /api/v1/score-events", s.auth(http.HandlerFunc(s.events)))
 	mux.Handle("PUT /api/v1/couple/nickname", s.auth(http.HandlerFunc(s.updateNickname)))
+	mux.Handle("PUT /api/v1/couple/together-since", s.auth(http.HandlerFunc(s.updateTogetherSince)))
 	mux.Handle("PUT /api/v1/me/avatar", s.auth(http.HandlerFunc(s.updateAvatar)))
 	mux.Handle("DELETE /api/v1/me/avatar", s.auth(http.HandlerFunc(s.deleteAvatar)))
 	mux.Handle("GET /api/v1/users/{id}/avatar", s.auth(http.HandlerFunc(s.avatar)))
@@ -217,7 +218,8 @@ func (s *server) acceptInvite(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) couple(w http.ResponseWriter, r *http.Request) {
 	uid := userID(r); var cid, a, b uuid.UUID; var nicknameA, nicknameB string
-	err := s.db.QueryRow(r.Context(), `select id,member_a,member_b,member_a_nickname,member_b_nickname from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &a, &b, &nicknameA, &nicknameB)
+	var togetherSince *string
+	err := s.db.QueryRow(r.Context(), `select id,member_a,member_b,member_a_nickname,member_b_nickname,to_char(together_since,'YYYY-MM-DD') from couples where status='active' and (member_a=$1 or member_b=$1)`, uid).Scan(&cid, &a, &b, &nicknameA, &nicknameB, &togetherSince)
 	if errors.Is(err, pgx.ErrNoRows) { writeJSON(w, 200, nil); return }; if err != nil { errorJSON(w, 500, "database_error"); return }
 	var settings struct { Initial int `json:"initial_score"`; Min *int `json:"min_score"`; Max *int `json:"max_score"`; AddMin int `json:"add_min"`; AddMax int `json:"add_max"`; SubtractMin int `json:"subtract_min"`; SubtractMax int `json:"subtract_max"` }
 	err = s.db.QueryRow(r.Context(), `select initial_score,min_score,max_score,add_min,add_max,subtract_min,subtract_max from score_settings where couple_id=$1`, cid).Scan(&settings.Initial, &settings.Min, &settings.Max, &settings.AddMin, &settings.AddMax, &settings.SubtractMin, &settings.SubtractMax)
@@ -234,7 +236,7 @@ func (s *server) couple(w http.ResponseWriter, r *http.Request) {
 	var decision *ruleDecisionJSON
 	var decisionRow ruleDecisionJSON
 	if e := s.db.QueryRow(r.Context(), `select requester_id,status,responded_at from rule_change_requests where couple_id=$1 and status in ('accepted','rejected') and responded_at is not null order by responded_at desc limit 1`, cid).Scan(&decisionRow.RequesterID, &decisionRow.Status, &decisionRow.RespondedAt); e == nil { decision = &decisionRow }
-	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": currentName, "partner_name": partnerName, "partner_nickname": nickname, "cards": cards, "events": events, "settings": settings, "pending_rules": pending, "latest_rule_decision": decision})
+	writeJSON(w, 200, map[string]any{"couple_id": cid.String(), "current_user_id": uid.String(), "current_user_name": currentName, "partner_name": partnerName, "partner_nickname": nickname, "together_since": togetherSince, "cards": cards, "events": events, "settings": settings, "pending_rules": pending, "latest_rule_decision": decision})
 }
 type eventJSON struct{ID string `json:"id"`;ActorID string `json:"actor_id"`;ActorName string `json:"actor_name"`;TargetName string `json:"target_name"`;Delta int `json:"delta"`;ScoreAfter int `json:"score_after"`;Note *string `json:"note"`;CreatedAt time.Time `json:"created_at"`}
 func (s *server) loadEvents(ctx context.Context,cid uuid.UUID, from, to, keyword string)[]eventJSON{from = strings.TrimSpace(from); to = strings.TrimSpace(to); keyword = strings.TrimSpace(keyword); if len([]rune(keyword)) > 80 { keyword = string([]rune(keyword)[:80]) }; args := []any{cid}; where := `e.couple_id=$1`; if from != "" { args = append(args, from); where += fmt.Sprintf(" and e.created_at >= ($%d::date::timestamp at time zone 'Asia/Shanghai')", len(args)) }; if to != "" { args = append(args, to); where += fmt.Sprintf(" and e.created_at < (($%d::date + interval '1 day')::timestamp at time zone 'Asia/Shanghai')", len(args)) }; if keyword != "" { args = append(args, "%"+keyword+"%"); where += fmt.Sprintf(" and e.note ilike $%d", len(args)) }; query := `select e.id,e.actor_id,au.display_name,tu.display_name,e.delta,e.score_after,e.note,e.created_at from score_events e join app_users au on au.id=e.actor_id join app_users tu on tu.id=e.target_user_id where `+where+` order by e.created_at desc limit 200`; rows,err:=s.db.Query(ctx,query,args...);if err!=nil{return []eventJSON{}};defer rows.Close();out:=[]eventJSON{};for rows.Next(){var id,actor uuid.UUID;var a,t string;var d,sa int;var note *string;var at time.Time;if rows.Scan(&id,&actor,&a,&t,&d,&sa,&note,&at)==nil{out=append(out,eventJSON{id.String(),actor.String(),a,t,d,sa,note,at})}};return out}

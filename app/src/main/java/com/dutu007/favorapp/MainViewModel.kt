@@ -220,6 +220,26 @@ class MainViewModel : ViewModel() {
         return true
     }
 
+    fun saveTogetherSince(date: String?, onSaved: () -> Unit) {
+        val context = readContext(requireCouple = true) ?: return
+        if (date != null && togetherDays(date, LocalDate.now()) == null) {
+            _uiState.update { it.withNotice("请选择今天或更早的有效日期", isError = true) }
+            return
+        }
+        runBusy {
+            val savedDate = repository.updateTogetherSince(date)
+            if (!isReadContextCurrent(context)) return@runBusy
+            // A read started before this save must not restore the previous date.
+            invalidateRead(snapshotRead)
+            _uiState.update {
+                it.copy(snapshot = it.snapshot?.copy(togetherSince = savedDate), snapshotRefreshing = false)
+                    .withNotice(if (savedDate == null) "在一起的日期已清除" else "在一起的日期已保存")
+            }
+            onSaved()
+            loadSnapshot()
+        }
+    }
+
     fun avatarUrlFor(userId: String, version: Long): String? = repository.avatarUrl(userId, version)
     val authToken: String get() = repository.authToken()
     val currentVersionName: String get() = com.dutu007.favorapp.BuildConfig.VERSION_NAME
@@ -1116,6 +1136,7 @@ class MainViewModel : ViewModel() {
     private fun Exception.userMessage(): String {
         val raw = message.orEmpty()
         return when {
+            raw.contains("invalid_together_since", ignoreCase = true) -> "请选择今天或更早的有效日期"
             raw.contains("invalid_or_expired_code", ignoreCase = true) -> "邀请码无效或已过期"
             raw.contains("already_matched", ignoreCase = true) -> "你已经匹配过恋人了"
             raw.contains("not_matched", ignoreCase = true) -> "还没有匹配恋人，先完成配对再试"

@@ -17,6 +17,7 @@ https://api.zengdeming.cn
 - Score rule changes applied only after the partner approves
 - Partner nicknames and date/keyword searchable records
 - Transactional score updates with retry protection
+- A shared relationship start date in Settings, with days together shown on the home card
 - A shared agreement list with single-column cards, optional dates and multiline notes
 - Either partner can edit, complete, restore or delete agreements, with conflict protection
 
@@ -32,6 +33,18 @@ Run `testDebugUnitTest lintDebug assembleDebug` to check the Android app before
 merging; the Android workflow runs the same checks.
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Days together
+
+Set **在一起的日期** in Settings. The home card displays only the day count below
+TOGETHER, centered above the two avatars, using the current theme's primary color.
+The start date counts as day 1. Counts use the device's local calendar date and
+refresh at midnight and when the app returns to the foreground. Clearing and
+saving the date hides the count. Either partner can update the shared date.
+
+Deploy the backend with migration `0013_together_since.sql` before using the new
+setting. The API applies the migration automatically on startup; existing couples
+start with no date set.
 
 ## Agreement list
 

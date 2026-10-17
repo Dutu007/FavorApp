@@ -75,6 +75,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -117,8 +118,10 @@ import com.dutu007.favorapp.data.ScoreEventItem
 import com.dutu007.favorapp.data.ScorePreset
 import com.dutu007.favorapp.ui.theme.FavorTheme
 import java.io.File
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
@@ -843,6 +846,8 @@ private fun HomeScreen(snapshot: CoupleSnapshot, state: AppUiState, viewModel: M
 private fun CoupleHeroCard(snapshot: CoupleSnapshot, viewModel: MainViewModel) {
     val myCard = snapshot.cards.firstOrNull { it.userId == snapshot.currentUserId }
     val partnerCard = snapshot.cards.firstOrNull { it.userId != snapshot.currentUserId }
+    val today by rememberLocalDate()
+    val days = togetherDays(snapshot.togetherSince, today)
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -862,6 +867,18 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot, viewModel: MainViewModel) {
                     contentScale = ContentScale.FillBounds,
                     modifier = Modifier.matchParentSize(),
                 )
+                if (days != null) {
+                    Text(
+                        text = "$days 天",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = (heroW.value * 0.085f).coerceIn(22f, 34f).sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        modifier = Modifier.align(Alignment.TopCenter)
+                            .offset(y = heroH * 0.26f).width(heroW * 0.44f),
+                    )
+                }
                 AvatarBubble(
                     snapshot.currentUserName,
                     myCard?.let { viewModel.avatarUrlFor(it.userId, it.avatarVersion) },
@@ -1351,6 +1368,7 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
     BackHandler { if (page != "list") page = "list" else onDismiss() }
     if (page == "avatar") { AvatarSettings(state, viewModel) { page = "list" }; return }
     if (page == "nickname") { NicknameSettings(state, viewModel) { page = "list" }; return }
+    if (page == "together_since") { TogetherSinceSettings(state, viewModel) { page = "list" }; return }
     if (page == "rules") { RulesSettings(state, viewModel) { page = "list" }; return }
     if (page == "presets") { PresetSettings(state, viewModel) { page = "list" }; return }
     SettingsPageScaffold(
@@ -1362,6 +1380,9 @@ private fun SettingsScreen(state: AppUiState, viewModel: MainViewModel, onDismis
             item { SettingsRow("我的头像", "更换或移除") { page = "avatar" } }
             item {
                 SettingsRow("恋人昵称", "${state.snapshot?.partnerNickname?.ifBlank { "未设置" } ?: "未设置"}") { page = "nickname" }
+            }
+            if (state.snapshot != null) item {
+                SettingsRow("在一起的日期", state.snapshot.togetherSince ?: "未设置") { page = "together_since" }
             }
             item {
                 val settings = state.snapshot?.settings
@@ -1465,6 +1486,86 @@ private fun SettingsPageScaffold(
             PrimaryAction("保存", state.busy) { if (viewModel.savePartnerNickname(nickname)) onBack() }
             Text("留空保存即清除昵称，界面会恢复显示对方的名字。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TogetherSinceSettings(state: AppUiState, viewModel: MainViewModel, onBack: () -> Unit) {
+    val snapshot = state.snapshot ?: return
+    val today by rememberLocalDate()
+    var date by rememberSaveable(snapshot.coupleId) { mutableStateOf(snapshot.togetherSince.orEmpty()) }
+    var draftEdited by rememberSaveable(snapshot.coupleId) { mutableStateOf(false) }
+    var showPicker by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(snapshot.togetherSince) {
+        if (!draftEdited) date = snapshot.togetherSince.orEmpty()
+    }
+    LaunchedEffect(snapshot.coupleId) { viewModel.refreshSnapshot() }
+    SettingsPageScaffold(
+        "在一起的日期", onBack, isRefreshing = state.snapshotRefreshing,
+        onRefresh = { viewModel.refreshSnapshot() }, refreshEnabled = !state.busy,
+    ) { padding ->
+        Column(
+            Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp).fillMaxSize()
+                .padding(padding).consumeWindowInsets(padding).verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                "选择你们开始在一起的那一天，两个人共享这个日期。",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = { showPicker = true }, enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(18.dp),
+            ) { Text(if (date.isBlank()) "选择日期" else date, style = MaterialTheme.typography.titleMedium) }
+            Text(
+                "开始当天算第 1 天，主页会自动更新天数。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            InlineNotice(state, viewModel)
+            PrimaryAction("保存", state.busy) {
+                viewModel.saveTogetherSince(date.takeIf { it.isNotBlank() }, onBack)
+            }
+            if (date.isNotBlank()) TextButton(
+                onClick = { date = ""; draftEdited = true }, enabled = !state.busy,
+            ) { Text("清除日期") }
+            if (date.isBlank()) Text(
+                "未设置日期时，主页隐藏天数。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    if (showPicker) {
+        val latestDateMillis = today.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        val selectableDates = remember(today) {
+            object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis <= latestDateMillis
+                override fun isSelectableYear(year: Int): Boolean = year <= today.year
+            }
+        }
+        val picker = rememberDatePickerState(
+            initialSelectedDateMillis = (parseTogetherSince(date) ?: today)
+                .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+            yearRange = 1..today.year,
+            selectableDates = selectableDates,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(
+                    enabled = picker.selectedDateMillis != null,
+                    onClick = {
+                        date = picker.selectedDateMillis?.let {
+                            Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()
+                        }.orEmpty()
+                        draftEdited = true
+                        showPicker = false
+                    },
+                ) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showPicker = false }) { Text("取消") } },
+        ) { DatePicker(state = picker) }
     }
 }
 

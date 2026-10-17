@@ -23,6 +23,7 @@ import java.io.File
 @Serializable private data class AuthRequest(val username: String, val password: String, @SerialName("display_name") val displayName: String? = null)
 @Serializable private data class InviteRequest(val code: String)
 @Serializable private data class NicknameRequest(val nickname: String)
+@Serializable private data class TogetherSinceDto(@SerialName("together_since") val togetherSince: String?)
 @Serializable private data class InviteCreateRequest(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int?, @SerialName("max_score") val max: Int?, @SerialName("add_min") val addMin: Int, @SerialName("add_max") val addMax: Int, @SerialName("subtract_min") val subtractMin: Int, @SerialName("subtract_max") val subtractMax: Int)
 @Serializable private data class ScoreRequest(val delta: Int, val note: String? = null, @SerialName("idempotency_key") val idempotencyKey: String)
 @Serializable private data class RulesChangeRequest(@SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
@@ -34,7 +35,7 @@ import java.io.File
 @Serializable private data class SettingsDto(@SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class PendingRulesDto(val id: String, @SerialName("requester_id") val requesterId: String, @SerialName("initial_score") val initial: Int, @SerialName("min_score") val min: Int? = null, @SerialName("max_score") val max: Int? = null, @SerialName("add_min") val addMin: Int = 1, @SerialName("add_max") val addMax: Int = 5, @SerialName("subtract_min") val subtractMin: Int = 1, @SerialName("subtract_max") val subtractMax: Int = 5)
 @Serializable private data class RuleDecisionDto(@SerialName("requester_id") val requesterId: String, val status: String, @SerialName("responded_at") val respondedAt: String)
-@Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, @SerialName("partner_nickname") val partnerNickname: String = "", val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto, @SerialName("pending_rules") val pendingRules: PendingRulesDto? = null, @SerialName("latest_rule_decision") val latestRuleDecision: RuleDecisionDto? = null)
+@Serializable private data class CoupleDto(@SerialName("couple_id") val coupleId: String, @SerialName("current_user_id") val currentUserId: String, @SerialName("current_user_name") val currentUserName: String, @SerialName("partner_name") val partnerName: String, @SerialName("partner_nickname") val partnerNickname: String = "", val cards: List<ScoreCardDto>, val events: List<EventDto>, val settings: SettingsDto, @SerialName("pending_rules") val pendingRules: PendingRulesDto? = null, @SerialName("latest_rule_decision") val latestRuleDecision: RuleDecisionDto? = null, @SerialName("together_since") val togetherSince: String? = null)
 @Serializable private data class ErrorDto(val error: String)
 @Serializable private data class AppReleaseDto(val version_code: Int, val version_name: String, val notes: String = "", val sha256: String = "", val size: Long = 0)
 @Serializable private data class GiftStepDto(val label: String, val at: String? = null)
@@ -96,6 +97,9 @@ class FavorRepository(context: Context) {
     suspend fun acceptInvite(code: String) { client.post("$baseUrl/api/v1/invites/accept") { auth(); json(InviteRequest(code)) }.check() }
     suspend fun addScore(delta: Int, note: String?, idempotencyKey: String) { client.post("$baseUrl/api/v1/scores/events") { auth(); json(ScoreRequest(delta, note, idempotencyKey)) }.bodyChecked<EventDto>() }
     suspend fun updateNickname(nickname: String) { client.put("$baseUrl/api/v1/couple/nickname") { auth(); json(NicknameRequest(nickname)) }.check() }
+    suspend fun updateTogetherSince(date: String?): String? =
+        client.put("$baseUrl/api/v1/couple/together-since") { auth(); json(TogetherSinceDto(date)) }
+            .bodyChecked<TogetherSinceDto>().togetherSince
     suspend fun uploadAvatar(bytes: ByteArray) { client.put("$baseUrl/api/v1/me/avatar") { auth(); contentType(ContentType("image", "jpeg")); setBody(bytes) }.check() }
     suspend fun deleteAvatar() { client.delete("$baseUrl/api/v1/me/avatar") { auth() }.check() }
     fun avatarUrl(userId: String, version: Long): String? = if (version > 0) "$baseUrl/api/v1/users/$userId/avatar?v=$version" else null
@@ -184,7 +188,7 @@ class FavorRepository(context: Context) {
     private fun HttpRequestBuilder.json(value: Any) { contentType(ContentType.Application.Json); setBody(value) }
     private suspend inline fun <reified T> HttpResponse.bodyChecked(): T { check(); return body() }
     private suspend fun HttpResponse.check() { if (status.value !in 200..299) { val error = runCatching { body<ErrorDto>() }.getOrNull()?.error; throw ApiException(status.value, error ?: "request_failed") } }
-    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, partnerNickname, cards.map { ScoreCard(it.userId, it.name, it.score, it.avatarVersion) }, events.map { ScoreEventItem(it.id, it.actorId, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax), pendingRules?.let { PendingRuleRequest(it.id, it.requesterId, it.initial, it.min, it.max, it.addMin, it.addMax, it.subtractMin, it.subtractMax) }, latestRuleDecision?.let { RuleDecision(it.requesterId, it.status, it.respondedAt) })
+    private fun CoupleDto.toSnapshot() = CoupleSnapshot(coupleId, currentUserId, currentUserName, partnerName, partnerNickname, cards.map { ScoreCard(it.userId, it.name, it.score, it.avatarVersion) }, events.map { ScoreEventItem(it.id, it.actorId, it.actorName, it.targetName, it.delta, it.scoreAfter, it.note, it.createdAt) }, ScoreSettingRow(coupleId, settings.initial, settings.min, settings.max, settings.addMin, settings.addMax, settings.subtractMin, settings.subtractMax), pendingRules?.let { PendingRuleRequest(it.id, it.requesterId, it.initial, it.min, it.max, it.addMin, it.addMax, it.subtractMin, it.subtractMax) }, latestRuleDecision?.let { RuleDecision(it.requesterId, it.status, it.respondedAt) }, togetherSince = togetherSince)
 }
 
 class ApiException(val statusCode: Int, val code: String) : Exception(code)

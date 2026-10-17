@@ -160,7 +160,6 @@ fun AgreementScreen(
                     AgreementCard(
                         item, snapshot, enabled = !state.agreementsBusy && !state.agreementsLoading,
                         onOpen = { details = item },
-                        onComplete = { viewModel.setAgreementCompleted(item, !item.completed) },
                     )
                 }
                 if (state.agreementsHasMore) {
@@ -261,7 +260,7 @@ private fun AgreementCount(label: String, count: Int, modifier: Modifier) {
 @Composable
 private fun AgreementCard(
     item: AgreementItem, snapshot: CoupleSnapshot, enabled: Boolean,
-    onOpen: () -> Unit, onComplete: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     ElevatedCard(
         onClick = onOpen, enabled = enabled, modifier = Modifier.fillMaxWidth(),
@@ -279,19 +278,15 @@ private fun AgreementCard(
                 item.note.ifBlank { "留一点期待，慢慢一起实现" },
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                if (item.completed) "完成于 ${agreementTime(item.completedAt, short = true)}"
-                else item.dueDate?.let { "希望 $it" } ?: "日期待定",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary,
+            val dateText = if (item.completed) "完成于 ${agreementTime(item.completedAt, short = true)}"
+                else item.dueDate?.let { "希望 $it" }
+            if (dateText != null) Text(
+                dateText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary,
             )
             Text(
                 "${agreementCreator(item, snapshot)}添加",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = item.completed, onCheckedChange = { onComplete() }, enabled = enabled)
-                Text(if (item.completed) "已完成" else "完成", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
         }
     }
 }
@@ -314,7 +309,7 @@ private fun AgreementDetails(
             notice()
             Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(if (item.completed) "已完成 · ${agreementTime(item.completedAt)}" else "待完成", color = MaterialTheme.colorScheme.primary)
-            Text(item.dueDate?.let { "希望完成日期：$it" } ?: "希望完成日期：暂未约定", color = MaterialTheme.colorScheme.secondary)
+            item.dueDate?.let { Text("希望完成日期：$it", color = MaterialTheme.colorScheme.secondary) }
             Surface(shape = RoundedCornerShape(20.dp), color = Color.White) {
                 Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("备注", fontWeight = FontWeight.SemiBold)
@@ -364,7 +359,10 @@ private fun AgreementEditor(
                         Text("对方更新了这条约定，请选择后再保存。", fontWeight = FontWeight.SemiBold)
                         Text("最新标题：${latest.title}", style = MaterialTheme.typography.bodySmall)
                         Text(latest.note, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                        Text((if (latest.completed) "已完成" else "待完成") + " · " + (latest.dueDate ?: "日期待定"), style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            listOfNotNull(if (latest.completed) "已完成" else "待完成", latest.dueDate).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         TextButton(onClick = {
                             title = latest.title; note = latest.note; date = latest.dueDate.orEmpty()
                             onUseLatest(latest)
@@ -447,7 +445,7 @@ private fun AgreementPageDialog(
                 topBar = {
                     TopAppBar(
                         title = { Text(title, fontWeight = FontWeight.Bold) },
-                        navigationIcon = { TextButton(onClick = onDismiss, enabled = !busy) { Text("返回") } },
+                        navigationIcon = { AppBackButton(onClick = onDismiss, enabled = !busy) },
                         actions = topAction,
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                     )

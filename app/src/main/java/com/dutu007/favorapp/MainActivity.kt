@@ -1434,7 +1434,7 @@ private fun SettingsPageScaffold(
             topBar = {
                 TopAppBar(
                     title = { RefreshingTitle(title, isRefreshing) },
-                    navigationIcon = { TextButton(onClick = onBack) { Text("‹", fontSize = 30.sp) } },
+                    navigationIcon = { AppBackButton(onClick = onBack) },
                     actions = {
                         if (onRefresh != null) IconButton(onClick = onRefresh, enabled = refreshEnabled && !isRefreshing) {
                             Icon(RefreshIcon, contentDescription = "刷新", tint = MaterialTheme.colorScheme.primary)

@@ -111,6 +111,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dutu007.favorapp.data.CoupleSnapshot
@@ -875,12 +876,13 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot, viewModel: MainViewModel) {
                     Text(
                         text = "$days Days",
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
-                        fontSize = (heroW.value * 0.095f).coerceIn(26f, 38f).sp,
+                        fontSize = (heroW.value * 0.088f).coerceIn(24f, 35f).sp,
                         fontFamily = TogetherDaysFont,
                         fontWeight = FontWeight.Normal,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier.align(Alignment.TopCenter)
+                            .zIndex(1f)
                             .offset(y = heroH * 0.26f).width(heroW * 0.50f),
                     )
                 }

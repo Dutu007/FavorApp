@@ -103,6 +103,8 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -130,6 +132,8 @@ import java.util.TimeZone
 private val PinkGradient = Brush.verticalGradient(
     listOf(Color(0xFFFFE0ED), Color(0xFFF5EEFC), Color(0xFFFFFAFC)),
 )
+
+private val TogetherDaysFont = FontFamily(Font(R.font.dancing_script))
 
 private val AgreementNavIcon = ImageVector.Builder(
     name = "AgreementList", defaultWidth = 24.dp, defaultHeight = 24.dp,
@@ -869,14 +873,15 @@ private fun CoupleHeroCard(snapshot: CoupleSnapshot, viewModel: MainViewModel) {
                 )
                 if (days != null) {
                     Text(
-                        text = "$days 天",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = (heroW.value * 0.085f).coerceIn(22f, 34f).sp,
-                        fontWeight = FontWeight.SemiBold,
+                        text = "$days Days",
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                        fontSize = (heroW.value * 0.095f).coerceIn(26f, 38f).sp,
+                        fontFamily = TogetherDaysFont,
+                        fontWeight = FontWeight.Normal,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier.align(Alignment.TopCenter)
-                            .offset(y = heroH * 0.26f).width(heroW * 0.44f),
+                            .offset(y = heroH * 0.26f).width(heroW * 0.50f),
                     )
                 }
                 AvatarBubble(

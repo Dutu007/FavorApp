@@ -36,8 +36,8 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Days together
 
-Set **在一起的日期** in Settings. The home card displays only the day count below
-TOGETHER, centered above the two avatars, using the current theme's primary color.
+Set **在一起的日期** in Settings. The home card displays `n Days` below TOGETHER,
+centered above the two avatars, in soft pink Dancing Script handwriting.
 The start date counts as day 1. Counts use the device's local calendar date and
 refresh at midnight and when the app returns to the foreground. Clearing and
 saving the date hides the count. Either partner can update the shared date.

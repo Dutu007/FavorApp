@@ -1,42 +1,13 @@
+name: favor-app
+
 services:
-  postgres:
-    image: ghcr.io/dutu007/favorapp-postgres:16-alpine
-    mem_limit: 256m
-    mem_reservation: 192m
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
-      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    ports:
-      - "127.0.0.1:5432:5432"
-    command:
-      - postgres
-      - -c
-      - shared_buffers=64MB
-      - -c
-      - effective_cache_size=128MB
-      - -c
-      - work_mem=2MB
-      - -c
-      - maintenance_work_mem=16MB
-      - -c
-      - max_connections=20
-    volumes:
-      - favorapp-postgres:/var/lib/postgresql/data
-    networks: [favorapp]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
   api:
     image: ghcr.io/dutu007/favorapp-api:${IMAGE_TAG:-latest}
     mem_limit: 128m
     mem_reservation: 64m
     restart: unless-stopped
     environment:
-      DATABASE_HOST: postgres
+      DATABASE_HOST: shared-postgres
       DATABASE_PORT: 5432
       DATABASE_NAME: ${POSTGRES_DB:?POSTGRES_DB is required}
       DATABASE_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
@@ -44,9 +15,6 @@ services:
       LISTEN_ADDR: :8080
     volumes:
       - ./apks:/data/apks:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -55,15 +23,15 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      favorapp:
+      database:
       edge:
         aliases:
           - favorapp-api
+
 networks:
-  favorapp:
-    driver: bridge
+  database:
+    external: true
+    name: shared-db
   edge:
     external: true
     name: zengdeming-edge
-volumes:
-  favorapp-postgres:

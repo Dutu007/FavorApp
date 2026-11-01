@@ -2,9 +2,8 @@
 
 ## Goal
 
-Replace the Supabase client and hosted database with a self-hosted backend at
-`https://api.zengdeming.cn`, backed by PostgreSQL on the user's Alibaba Cloud
-Lightweight Application Server.
+Provide a self-hosted backend at `https://api.zengdeming.cn`, backed by
+PostgreSQL on the user's Alibaba Cloud Lightweight Application Server.
 
 ## Deployment topology
 
@@ -64,13 +63,6 @@ uses `https://api.zengdeming.cn` as its API base URL and uploads the debug APK.
 The server deploys by pulling the selected image and running Docker Compose.
 Secrets remain on the server or in GitHub Actions secrets; no passwords or
 private deployment keys are committed.
-
-## Removal scope
-
-Remove Supabase Android dependencies, client initialization, Supabase keys,
-Supabase migration deployment workflow, and Supabase-only SQL/RLS code. The
-PostgreSQL schema is recreated as backend-owned migrations with equivalent
-authorization checks in Go transactions.
 
 ## Acceptance criteria
 

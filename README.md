@@ -15,11 +15,13 @@ https://api.zengdeming.cn
 - Mutual score balances and newest-first history
 - Optional minimum and maximum score limits
 - Score rule changes applied only after the partner approves
-- Partner nicknames and date/keyword searchable records
+- Partner nicknames and avatars, with date and keyword searchable records
 - Transactional score updates with retry protection
 - A shared relationship start date in Settings, with days together shown on the home card
 - A shared agreement list with single-column cards, optional dates and multiline notes
 - Either partner can edit, complete, restore or delete agreements, with conflict protection
+- Gift rewards with partner-set score goals, a preparer-owned timeline and paged history
+- In-app updates that download and install a new signed APK without leaving the app
 
 ## Android development
 
@@ -42,14 +44,13 @@ The start date counts as day 1. Counts use the device's local calendar date and
 refresh at midnight and when the app returns to the foreground. Clearing and
 saving the date hides the count. Either partner can update the shared date.
 
-Deploy the backend with migration `0013_together_since.sql` before using the new
-setting. The API applies the migration automatically on startup; existing couples
-start with no date set.
+Migration `0013_together_since.sql` adds the shared column. The API applies it
+automatically on startup; couples that existed before it starts with no date set.
 
 ## Agreement list
 
-The new destination, **约定清单**, records things both partners want to do
-together. Each card occupies one row and grows to fit its full title and notes.
+The **约定清单** destination records things both partners want to do together.
+Each card occupies one row and grows to fit its full title and notes.
 Titles are required (up to 40 Unicode code points). Notes support multiple lines
 (up to 2000 code points), and the hoped-for completion date is optional.
 Completed agreements remain in a
@@ -71,12 +72,41 @@ same bottom space is not reserved twice when typing.
 The list refreshes on entry, on returning to the foreground and on manual
 refresh. Records are scoped to the active couple. Version checks prevent silent
 overwrites, and creation keys prevent duplicate records after network retries.
-The API applies migration `0012_agreements.sql` on startup. Deploy the backend
-from this branch together with the Android update before using this feature.
+Migration `0012_agreements.sql` creates the table; the API applies it on startup.
 
 Backend checks can be run with `cd backend && go test -race ./...`. To include
 database integration tests, set `AGREEMENTS_TEST_DATABASE_URL` to a disposable
 PostgreSQL database; each test creates and removes its own isolated schema.
+
+## Gift rewards
+
+**阶段性奖励** turns points into a present. Each partner sets the other's goal:
+you decide how many points your partner must reach before they can ask you for
+something. Once their score is at or above that target, they raise a request with
+a title (up to 40 characters) and an optional note (up to 200). Only the partner
+who will prepare the gift can accept it, and only they own the plan afterwards:
+one to eight steps of up to twelve characters, with completion times stamped as
+progress advances.
+
+Completing the last step marks the gift received. Only the requester can cancel,
+and only while it is still requested or active. Either partner can delete a
+received or cancelled record after confirming. The API allows one in-flight gift
+per person; a second attempt is rejected as a conflict instead of duplicating the
+request. Finished and cancelled gifts move to **过往礼物**, twenty per page,
+newest first.
+
+## In-app updates
+
+A commit touching `app/**` builds a signed release APK, uploads `favorapp.apk` and
+`latest.json` to `favor-app/apks` on the server, and publishes the version through
+`GET /api/v1/app/latest`. The app checks on launch and from **检查更新** in
+Settings, then downloads from `GET /api/v1/app/apk` when the published
+`versionCode` is higher. Versions follow `1.0.<build number>`, so every release is
+monotonic and the in-place install works without uninstalling.
+
+The GitHub Actions secrets, keystore handling and the server volume mount are
+documented in `ARCHITECTURE_AND_UPDATE.md`. Losing the keystore breaks update
+installs for every device that already has the app.
 
 ## Server deployment
 
@@ -141,5 +171,8 @@ The independent PostgreSQL image is managed by infrastructure configuration;
 application releases do not rebuild or recreate the database container. Startup
 migrations only move the schema forward; rolling back an image does not undo them.
 
-The Android workflow builds an APK configured for the production API and uploads
-it as the `FavorApp-debug-apk` artifact.
+The Android workflow runs `testDebugUnitTest`, `lintDebug` and `assembleDebug`
+against the production API and uploads the debug APK as the
+`FavorApp-debug-apk` artifact. When the signing secrets are configured it also
+builds a signed release APK, uploads it as `FavorApp-release-apk`, and publishes
+it to the server so both phones can update in place.

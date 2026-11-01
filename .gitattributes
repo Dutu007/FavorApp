@@ -1,0 +1,11 @@
+# Normalize line endings on commit; keep shell scripts LF on every platform.
+* text=auto
+
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+*.jar binary
+*.jks binary
+*.png binary
+*.jpg binary

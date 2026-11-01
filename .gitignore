@@ -20,3 +20,5 @@ keystore/
 .DS_Store
 Thumbs.db
 .vscode/
+.zcodeignore
+.workbuddy/

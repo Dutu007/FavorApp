@@ -43,7 +43,10 @@ on `127.0.0.1:8080`, while PostgreSQL has no host port mapping.
 
 ## Deployment
 
-GitHub Actions tests and publishes the API image and a PostgreSQL 16 image based
-on the official Alpine image. The server uploads `compose.yaml` and uses Docker
-Compose with a persistent PostgreSQL volume. The API runs embedded SQL migrations
-on startup. Secrets stay in the server `.env`.
+GitHub Actions tests and publishes the API image. Favor's `compose.yaml` manages
+only that API; PostgreSQL 16 is managed independently at
+`/home/dutu/workspace/infra/postgres` as `shared-postgres`, with the persistent
+`shared-postgres-data` volume. The API connects over `shared-db` to its own
+`favorapp` database as the ordinary role `favorapp_app`. The website uses a
+separate database and role on the same instance. The API runs pending embedded
+SQL migrations on startup. Secrets stay in the server `.env`.

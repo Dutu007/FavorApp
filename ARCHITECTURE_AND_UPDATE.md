@@ -17,14 +17,15 @@ api.zengdeming.cn -> zengdeming-gateway -> favorapp-api:8080
 | 服务 | 镜像 | 作用 |
 | --- | --- | --- |
 | `api` | `ghcr.io/dutu007/favorapp-api:latest` | 注册、登录、匹配、评分、记录和礼物奖励 API |
-| `postgres` | `ghcr.io/dutu007/favorapp-postgres:16-alpine` | 应用数据库 |
+| 独立基础设施 `shared-postgres` | `shared-postgres:16.15` | Favor 与网站共用的 PostgreSQL 实例 |
 
-资源限制：PostgreSQL 256 MB，API 128 MB，合计最多 384 MB。
+资源限制：API 128 MB；共享 PostgreSQL 256 MB，由 `/home/dutu/workspace/infra/postgres` 单独管理。
 
 - API 只绑定宿主机 `127.0.0.1:8080`。
-- PostgreSQL 仅在需要远程管理时绑定宿主机 `127.0.0.1:5432`，再通过 SSH 隧道访问；不对公网开放。
+- PostgreSQL 当前仅在内部网络 `shared-db` 上提供连接，没有发布宿主机端口。
 - API 通过外部 Docker 网络 `zengdeming-edge` 的别名 `favorapp-api` 被网关访问。
-- 数据库数据保存在 Docker volume `favorapp-postgres`。
+- API 通过 `shared-db` 连接 `shared-postgres:5432/favorapp`，使用普通账号 `favorapp_app`。
+- 数据库数据保存在独立的 Docker volume `shared-postgres-data`；网站使用另一数据库 `mywebsites`，两个应用账号不能访问对方数据库。
 - `.env` 和 `certs/` 只保存在服务器，不提交到 GitHub。
 
 ## 更新 API
@@ -99,38 +100,35 @@ docker compose up -d
 
 ## 更新数据库镜像
 
-数据库镜像通常不需要更新。确实需要更新时：
+Favor 的 Compose 只管理 API，没有 `postgres` 服务。应用更新时不需要更新数据库镜像。
+数据库状态与日志应在独立基础设施目录查看：
 
 ```bash
-cd /home/dutu/workspace/favor-app
-docker compose pull postgres
-docker compose up -d postgres
+cd /home/dutu/workspace/infra/postgres
+docker compose ps
+docker compose logs --tail=100 postgres
 ```
 
-不要使用 `docker compose down -v`，否则会删除数据库数据卷。
+当前数据库使用本地标签 `shared-postgres:16.15` 和 `pull_policy: never`，不能靠 `pull postgres`
+更新。升级需先备份并验证兼容性，再准备新镜像、修改独立基础设施的配置；它会同时影响两个应用。
 
 ## 使用 Navicat 远程连接数据库
 
-先将本文件中的 Compose 配置上传到服务器，然后在服务器执行：
+当前没有可转发的宿主机 `127.0.0.1:5432` 端口。先在服务器获取数据库容器在共享网络上的 IP：
 
 ```bash
-cd /home/dutu/workspace/favor-app
-docker compose up -d postgres
+docker inspect shared-postgres \
+  --format '{{with index .NetworkSettings.Networks "shared-db"}}{{.IPAddress}}{{end}}'
 ```
 
-确认端口只监听回环地址：
-
-```bash
-ss -ltnp | grep ':5432'
-```
-
-本地 PowerShell 建立 SSH 隧道，建议使用本地 `15432` 端口，避免与本机 PostgreSQL 冲突：
+将下面的 `数据库容器IP` 替换为上一步结果，在本地 PowerShell 建立 SSH 隧道：
 
 ```powershell
-ssh -N -L 15432:127.0.0.1:5432 dutu@zengdeming.cn
+ssh -N -L 127.0.0.1:15432:数据库容器IP:5432 dutu@zengdeming.cn
 ```
 
-这个窗口需要保持打开。Navicat 新建 PostgreSQL 连接时填写：
+这个窗口需要保持打开。数据库容器重建后 IP 可能变化，需要重新获取并建立隧道。
+Navicat 新建 PostgreSQL 连接时填写：
 
 ```text
 主机：127.0.0.1
@@ -159,7 +157,7 @@ docker system df
 docker image prune -f
 docker compose ps
 docker compose logs --tail=100 api
-docker compose logs --tail=100 postgres
+docker logs --tail=100 shared-postgres
 docker stats --no-stream
 ```
 
